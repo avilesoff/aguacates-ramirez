@@ -8,7 +8,9 @@ function Login({ onLogin }) {
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    const { error, data } = await supabase.auth.signInWithPassword({
+    setMensaje(''); // limpiar antes de nuevo intento
+
+    const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -17,39 +19,89 @@ function Login({ onLogin }) {
       setMensaje('❌ ' + error.message);
     } else {
       setMensaje('✅ Inicio de sesión exitoso');
-      onLogin(); // avisa a App que el usuario ya está logueado
+      setTimeout(() => onLogin(), 800); // recarga luego de login
     }
   };
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '400px', margin: 'auto' }}>
-      <h2>Iniciar sesión</h2>
-      <form onSubmit={handleLogin}>
-        <div>
-          <label>Email:</label><br />
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={{ width: '100%', padding: '0.5rem' }}
-          />
-        </div>
-        <div style={{ marginTop: '1rem' }}>
-          <label>Contraseña:</label><br />
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={{ width: '100%', padding: '0.5rem' }}
-          />
-        </div>
-        <button type="submit" style={{ marginTop: '1rem', padding: '0.7rem' }}>
-          Iniciar sesión
-        </button>
-        {mensaje && <p>{mensaje}</p>}
-      </form>
+    <div style={{
+      backgroundColor: '#f5f5f5',
+      minHeight: '100vh',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      fontFamily: 'Arial, sans-serif'
+    }}>
+      <div style={{
+        backgroundColor: '#fff',
+        padding: '2rem',
+        borderRadius: '12px',
+        boxShadow: '0 0 10px rgba(0,0,0,0.1)',
+        maxWidth: '400px',
+        width: '100%',
+        textAlign: 'center'
+      }}>
+        <img
+          src="/aguacate.jpg"
+          alt="Logo Aguacates Ramírez"
+          style={{ width: '100px', height: '100px', objectFit: 'contain', marginBottom: '1rem' }}
+        />
+        <h1 style={{ color: '#2e7d32' }}>Aguacates Ramírez</h1>
+        <h2>Iniciar sesión</h2>
+
+        <form onSubmit={handleLogin} style={{ marginTop: '1.5rem' }}>
+          <div>
+            <label>Email</label><br />
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                borderRadius: '6px',
+                border: '1px solid #ccc',
+                marginBottom: '1rem'
+              }}
+            />
+          </div>
+          <div>
+            <label>Contraseña</label><br />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                borderRadius: '6px',
+                border: '1px solid #ccc',
+                marginBottom: '1.5rem'
+              }}
+            />
+          </div>
+          <button type="submit" style={{
+            width: '100%',
+            padding: '0.7rem',
+            backgroundColor: '#2e7d32',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '1rem'
+          }}>
+            Entrar
+          </button>
+        </form>
+
+        {mensaje && (
+          <p style={{ marginTop: '1rem', color: mensaje.includes('❌') ? 'red' : 'green' }}>
+            {mensaje}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
