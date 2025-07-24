@@ -1,15 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
+import Login from './Login';
 
 function App() {
   const [cliente, setCliente] = useState('');
   const [toneladas, setToneladas] = useState('');
   const [mensaje, setMensaje] = useState('');
+  const [usuario, setUsuario] = useState(null);
+
+  // Verifica si hay sesión activa al cargar
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUsuario(user);
+    });
+
+    supabase.auth.onAuthStateChange((_event, session) => {
+      setUsuario(session?.user || null);
+    });
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('recepciones')
       .insert([
         {
@@ -27,6 +40,17 @@ function App() {
     }
   };
 
+  const cerrarSesion = async () => {
+    await supabase.auth.signOut();
+    setUsuario(null);
+  };
+
+  // Si no hay sesión, mostrar login
+  if (!usuario) {
+    return <Login onLogin={() => window.location.reload()} />;
+  }
+
+  // Si hay sesión, mostrar formulario
   return (
     <div style={{
       backgroundColor: '#f5f5f5',
@@ -43,16 +67,33 @@ function App() {
         borderRadius: '12px',
         boxShadow: '0 0 10px rgba(0,0,0,0.1)',
         maxWidth: '400px',
-        width: '100%'
+        width: '100%',
+        position: 'relative'
       }}>
         <div style={{ textAlign: 'center' }}>
-  <img
-    src="/aguacate.jpg"
-    alt="Logo Aguacates Ramírez"
-    style={{ width: '100px', height: '100px', objectFit: 'contain', marginBottom: '0.5rem' }}
-  />
-  <h1 style={{ color: '#2e7d32' }}>Aguacates Ramírez</h1>
-</div>
+          <img
+            src="/aguacate.jpg"
+            alt="Logo Aguacates Ramírez"
+            style={{ width: '100px', height: '100px', objectFit: 'contain', marginBottom: '0.5rem' }}
+          />
+          <h1 style={{ color: '#2e7d32' }}>Aguacates Ramírez</h1>
+        </div>
+
+        <button
+          onClick={cerrarSesion}
+          style={{
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            backgroundColor: '#ccc',
+            border: 'none',
+            padding: '5px 10px',
+            borderRadius: '6px',
+            cursor: 'pointer'
+          }}
+        >
+          Salir
+        </button>
 
         <h2 style={{ textAlign: 'center' }}>Recepción de Aguacate</h2>
         <form onSubmit={handleSubmit}>
