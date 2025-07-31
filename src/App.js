@@ -3,6 +3,8 @@ import { supabase } from './supabaseClient';
 import Login from './Login';
 
 function App() {
+  const [tipo, setTipo] = useState([]);
+  const [kilosExtra, setKilosExtra] = useState('');
   const [cliente, setCliente] = useState('');
   const [toneladas, setToneladas] = useState('');
   const [mensaje, setMensaje] = useState('');
@@ -20,25 +22,30 @@ function App() {
   }, []);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+  e.preventDefault();
 
-    const { error } = await supabase
-      .from('recepciones')
-      .insert([
-        {
-          cliente_nombre: cliente,
-          toneladas: parseFloat(toneladas),
-        },
-      ]);
+  const { error } = await supabase
+    .from('recepciones')
+    .insert([
+      {
+        cliente_nombre: cliente,
+        toneladas: parseFloat(toneladas),
+        tipo: tipo.join(', '), // convierte array a texto: "Flor Loca, Desecho"
+        kilos_extra: parseFloat(kilosExtra || 0),
+      },
+    ]);
 
-    if (error) {
-      setMensaje('❌ Error al guardar: ' + error.message);
-    } else {
-      setMensaje('✅ Datos guardados correctamente.');
-      setCliente('');
-      setToneladas('');
-    }
-  };
+  if (error) {
+    setMensaje('❌ Error al guardar: ' + error.message);
+  } else {
+    setMensaje('✅ Datos guardados correctamente.');
+    setCliente('');
+    setToneladas('');
+    setTipo([]);
+    setKilosExtra('');
+  }
+};
+
 
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
@@ -95,7 +102,7 @@ function App() {
           Salir
         </button>
 
-        <h2 style={{ textAlign: 'center' }}>Recepción de Aguacate</h2>
+                <h2 style={{ textAlign: 'center' }}>Recepción de Aguacate</h2>
         <form onSubmit={handleSubmit}>
           <div style={{ marginTop: '1.5rem' }}>
             <label>Nombre del cliente:</label><br />
@@ -113,6 +120,7 @@ function App() {
               }}
             />
           </div>
+
           <div style={{ marginTop: '1rem' }}>
             <label>Toneladas recibidas:</label><br />
             <input
@@ -130,6 +138,48 @@ function App() {
               }}
             />
           </div>
+
+          <div style={{ marginTop: '1rem' }}>
+            <label>Kilos adicionales (si no se completó tonelada):</label><br />
+            <input
+              type="number"
+              step="0.01"
+              value={kilosExtra}
+              onChange={(e) => setKilosExtra(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                marginTop: '0.3rem',
+                borderRadius: '6px',
+                border: '1px solid #ccc'
+              }}
+            />
+          </div>
+
+          <div style={{ marginTop: '1rem' }}>
+            <label>Tipo de aguacate recibido:</label><br />
+            {['Flor Loca', 'Negro', 'Desecho'].map((opcion) => (
+              <div key={opcion}>
+                <label>
+                  <input
+                    type="checkbox"
+                    value={opcion}
+                    checked={tipo.includes(opcion)}
+                    onChange={(e) => {
+                      const valor = e.target.value;
+                      setTipo((prev) =>
+                        prev.includes(valor)
+                          ? prev.filter((item) => item !== valor)
+                          : [...prev, valor]
+                      );
+                    }}
+                  />
+                  {' '}{opcion}
+                </label>
+              </div>
+            ))}
+          </div>
+
           <button type="submit" style={{
             marginTop: '1.5rem',
             width: '100%',
@@ -144,6 +194,7 @@ function App() {
             Guardar
           </button>
         </form>
+
         {mensaje && (
           <p style={{ marginTop: '1rem', textAlign: 'center' }}>{mensaje}</p>
         )}
