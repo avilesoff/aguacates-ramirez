@@ -1,63 +1,104 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import Login from './Login';
+import Select from 'react-select';
 
 function App() {
-  const [tipo, setTipo] = useState([]);
-  const [kilosExtra, setKilosExtra] = useState('');
   const [cliente, setCliente] = useState('');
-  const [toneladas, setToneladas] = useState('');
+  const [clienteNuevo, setClienteNuevo] = useState('');
+  const [telefonoNuevo, setTelefonoNuevo] = useState('');
+  const [clientesRegistrados, setClientesRegistrados] = useState([]);
+  const [lineas, setLineas] = useState([
+    { tipo: '', toneladas: '' }
+  ]);
   const [mensaje, setMensaje] = useState('');
-  const [usuario, setUsuario] = useState(null);
 
-  // Verifica si hay sesión activa al cargar
+  const tiposDisponibles = ['Flor Loca', 'Negro', 'Desecho'];
+
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUsuario(user);
-    });
+    const cargarClientes = async () => {
+      const { data, error } = await supabase
+        .from('recepciones')
+        .select('cliente_nombre')
+        .neq('cliente_nombre', '')
+        .order('cliente_nombre', { ascending: true });
 
-    supabase.auth.onAuthStateChange((_event, session) => {
-      setUsuario(session?.user || null);
-    });
+      if (!error && data) {
+        const unicos = [...new Set(data.map(item => item.cliente_nombre.trim()))];
+        setClientesRegistrados(unicos);
+      }
+    };
+
+    cargarClientes();
   }, []);
 
-  const handleSubmit = async (e) => {
-  e.preventDefault();
-
-  const { error } = await supabase
-    .from('recepciones')
-    .insert([
-      {
-        cliente_nombre: cliente,
-        toneladas: parseFloat(toneladas),
-        tipo: tipo.join(', '), // convierte array a texto: "Flor Loca, Desecho"
-        kilos_extra: parseFloat(kilosExtra || 0),
-      },
-    ]);
-
-  if (error) {
-    setMensaje('❌ Error al guardar: ' + error.message);
-  } else {
-    setMensaje('✅ Datos guardados correctamente.');
-    setCliente('');
-    setToneladas('');
-    setTipo([]);
-    setKilosExtra('');
-  }
-};
-
-
-  const cerrarSesion = async () => {
-    await supabase.auth.signOut();
-    setUsuario(null);
+  const handleLineaChange = (index, campo, valor) => {
+    const nuevasLineas = [...lineas];
+    nuevasLineas[index][campo] = valor;
+    setLineas(nuevasLineas);
   };
 
-  // Si no hay sesión, mostrar login
-  if (!usuario) {
-    return <Login onLogin={() => window.location.reload()} />;
-  }
+  const agregarLinea = () => {
+    setLineas([...lineas, { tipo: '', toneladas: '' }]);
+  };
 
-  // Si hay sesión, mostrar formulario
+  const eliminarLinea = (index) => {
+    const nuevasLineas = [...lineas];
+    nuevasLineas.splice(index, 1);
+    setLineas(nuevasLineas);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    const nombreClienteFinal = cliente === '__nuevo__' ? clienteNuevo.trim() : cliente;
+
+    if (!nombreClienteFinal) {
+      setMensaje('❌ Debes escribir o seleccionar un nombre de cliente.');
+      return;
+    }
+
+    if (cliente === '__nuevo__') {
+      const yaExiste = clientesRegistrados.some(
+        (nombre) => nombre.toLowerCase() === nombreClienteFinal.toLowerCase()
+      );
+      if (yaExiste) {
+        setMensaje('❌ Este cliente ya está registrado. Selecciónalo desde la lista.');
+        return;
+      }
+
+      if (telefonoNuevo && !/^\d{10}$/.test(telefonoNuevo)) {
+        setMensaje('❌ El número de teléfono debe tener exactamente 10 dígitos.');
+        return;
+      }
+    }
+
+    const registros = lineas
+      .filter((linea) => linea.tipo && linea.toneladas)
+      .map((linea) => ({
+        cliente_nombre: nombreClienteFinal,
+        tipo: linea.tipo,
+        toneladas: parseFloat(linea.toneladas),
+        telefono_cliente: cliente === '__nuevo__' ? telefonoNuevo : null,
+      }));
+
+    if (registros.length === 0) {
+      setMensaje('❌ Debes llenar al menos un tipo con toneladas.');
+      return;
+    }
+
+    const { error } = await supabase.from('recepciones').insert(registros);
+
+    if (error) {
+      setMensaje('❌ Error al guardar: ' + error.message);
+    } else {
+      setMensaje('✅ Registros guardados correctamente.');
+      setCliente('');
+      setClienteNuevo('');
+      setTelefonoNuevo('');
+      setLineas([{ tipo: '', toneladas: '' }]);
+    }
+  };
+
   return (
     <div style={{
       backgroundColor: '#f5f5f5',
@@ -73,9 +114,8 @@ function App() {
         padding: '2rem',
         borderRadius: '12px',
         boxShadow: '0 0 10px rgba(0,0,0,0.1)',
-        maxWidth: '400px',
-        width: '100%',
-        position: 'relative'
+        maxWidth: '600px',
+        width: '100%'
       }}>
         <div style={{ textAlign: 'center' }}>
           <img
@@ -86,102 +126,118 @@ function App() {
           <h1 style={{ color: '#2e7d32' }}>Aguacates Ramírez</h1>
         </div>
 
-        <button
-          onClick={cerrarSesion}
-          style={{
-            position: 'absolute',
-            top: '10px',
-            right: '10px',
-            backgroundColor: '#ccc',
-            border: 'none',
-            padding: '5px 10px',
-            borderRadius: '6px',
-            cursor: 'pointer'
-          }}
-        >
-          Salir
-        </button>
+        <h2 style={{ textAlign: 'center' }}>Recepción de Aguacate</h2>
 
-                <h2 style={{ textAlign: 'center' }}>Recepción de Aguacate</h2>
         <form onSubmit={handleSubmit}>
-          <div style={{ marginTop: '1.5rem' }}>
+          <div style={{ marginTop: '1rem' }}>
             <label>Nombre del cliente:</label><br />
-            <input
-              type="text"
-              value={cliente}
-              onChange={(e) => setCliente(e.target.value)}
-              required
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                marginTop: '0.3rem',
-                borderRadius: '6px',
-                border: '1px solid #ccc'
+            <Select
+              options={[
+                ...clientesRegistrados.map(nombre => ({ label: nombre, value: nombre })),
+                { label: '➕ Nuevo cliente', value: '__nuevo__' }
+              ]}
+              value={
+                cliente
+                  ? { label: cliente === '__nuevo__' ? '➕ Nuevo cliente' : cliente, value: cliente }
+                  : null
+              }
+              onChange={(selectedOption) => {
+                setCliente(selectedOption.value);
               }}
+              placeholder="Selecciona un cliente"
+              isSearchable
             />
+
+            {cliente === '__nuevo__' && (
+              <>
+                <input
+                  type="text"
+                  placeholder="Escribe nuevo cliente"
+                  value={clienteNuevo}
+                  onChange={(e) => setClienteNuevo(e.target.value)}
+                  required
+                  style={inputEstilo}
+                />
+                <input
+                  type="tel"
+                  placeholder="Número de teléfono (10 dígitos, opcional)"
+                  value={telefonoNuevo}
+                  onChange={(e) => {
+                    const valor = e.target.value;
+                    if (/^\d{0,10}$/.test(valor)) {
+                      setTelefonoNuevo(valor);
+                    }
+                  }}
+                  style={inputEstilo}
+                />
+              </>
+            )}
           </div>
 
-          <div style={{ marginTop: '1rem' }}>
-            <label>Toneladas recibidas:</label><br />
-            <input
-              type="number"
-              step="0.01"
-              value={toneladas}
-              onChange={(e) => setToneladas(e.target.value)}
-              required
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                marginTop: '0.3rem',
-                borderRadius: '6px',
-                border: '1px solid #ccc'
-              }}
-            />
-          </div>
+          {lineas.map((linea, index) => (
+            <div key={index} style={{
+              marginTop: '1.5rem',
+              padding: '1rem',
+              backgroundColor: '#f9f9f9',
+              borderRadius: '8px',
+              border: '1px solid #ddd'
+            }}>
+              <h4>Tipo #{index + 1}</h4>
 
-          <div style={{ marginTop: '1rem' }}>
-            <label>Kilos adicionales (si no se completó tonelada):</label><br />
-            <input
-              type="number"
-              step="0.01"
-              value={kilosExtra}
-              onChange={(e) => setKilosExtra(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                marginTop: '0.3rem',
-                borderRadius: '6px',
-                border: '1px solid #ccc'
-              }}
-            />
-          </div>
+              <label>Tipo de aguacate:</label><br />
+              <select
+                value={linea.tipo}
+                onChange={(e) => handleLineaChange(index, 'tipo', e.target.value)}
+                required
+                style={inputEstilo}
+              >
+                <option value="">Selecciona tipo</option>
+                {tiposDisponibles.map((tipo) => (
+                  <option key={tipo} value={tipo}>{tipo}</option>
+                ))}
+              </select>
 
-          <div style={{ marginTop: '1rem' }}>
-            <label>Tipo de aguacate recibido:</label><br />
-            {['Flor Loca', 'Negro', 'Desecho'].map((opcion) => (
-              <div key={opcion}>
-                <label>
-                  <input
-                    type="checkbox"
-                    value={opcion}
-                    checked={tipo.includes(opcion)}
-                    onChange={(e) => {
-                      const valor = e.target.value;
-                      setTipo((prev) =>
-                        prev.includes(valor)
-                          ? prev.filter((item) => item !== valor)
-                          : [...prev, valor]
-                      );
-                    }}
-                  />
-                  {' '}{opcion}
-                </label>
-              </div>
-            ))}
-          </div>
+              <label>Toneladas:</label><br />
+              <input
+                type="number"
+                step="0.01"
+                value={linea.toneladas}
+                onChange={(e) => handleLineaChange(index, 'toneladas', e.target.value)}
+                required
+                style={inputEstilo}
+              />
+
+              {lineas.length > 1 && (
+                <button type="button" onClick={() => eliminarLinea(index)} style={{
+                  marginTop: '0.5rem',
+                  backgroundColor: '#ccc',
+                  border: 'none',
+                  padding: '0.5rem',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}>
+                  Eliminar esta línea
+                </button>
+              )}
+            </div>
+          ))}
+
+          <button type="button" onClick={agregarLinea} style={{
+            marginTop: '1rem',
+            width: '100%',
+            padding: '0.7rem',
+            backgroundColor: '#1976d2',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '1rem'
+          }}>
+            ➕ Agregar otro tipo
+          </button>
 
           <button type="submit" style={{
-            marginTop: '1.5rem',
+            marginTop: '1rem',
             width: '100%',
             padding: '0.7rem',
             backgroundColor: '#2e7d32',
@@ -191,16 +247,26 @@ function App() {
             cursor: 'pointer',
             fontSize: '1rem'
           }}>
-            Guardar
+            Guardar recepción
           </button>
         </form>
 
         {mensaje && (
-          <p style={{ marginTop: '1rem', textAlign: 'center' }}>{mensaje}</p>
+          <p style={{ marginTop: '1rem', textAlign: 'center', color: mensaje.includes('❌') ? 'red' : 'green' }}>
+            {mensaje}
+          </p>
         )}
       </div>
     </div>
   );
 }
+
+const inputEstilo = {
+  width: '100%',
+  padding: '0.5rem',
+  marginTop: '0.5rem',
+  borderRadius: '6px',
+  border: '1px solid #ccc'
+};
 
 export default App;
