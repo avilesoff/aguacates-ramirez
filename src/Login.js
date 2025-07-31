@@ -3,107 +3,88 @@ import { supabase } from './supabaseClient';
 
 function Login({ onLogin }) {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [contrasena, setContrasena] = useState('');
   const [mensaje, setMensaje] = useState('');
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setMensaje(''); // limpiar antes de nuevo intento
-
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
-      password,
+      password: contrasena,
     });
 
     if (error) {
-      setMensaje('❌ ' + error.message);
+      setMensaje('❌ Error al iniciar sesión: ' + error.message);
     } else {
-      setMensaje('✅ Inicio de sesión exitoso');
-      setTimeout(() => onLogin(), 800); // recarga luego de login
+      setMensaje('');
+      onLogin(data.user);
     }
   };
 
   return (
     <div style={{
       backgroundColor: '#f5f5f5',
-      minHeight: '100vh',
+      height: '100vh',
       display: 'flex',
       justifyContent: 'center',
       alignItems: 'center',
-      fontFamily: 'Arial, sans-serif'
+      fontFamily: 'Arial',
     }}>
       <div style={{
         backgroundColor: '#fff',
         padding: '2rem',
-        borderRadius: '12px',
+        borderRadius: '10px',
         boxShadow: '0 0 10px rgba(0,0,0,0.1)',
         maxWidth: '400px',
-        width: '100%',
-        textAlign: 'center'
+        width: '100%'
       }}>
-        <img
-          src="/aguacate.jpg"
-          alt="Logo Aguacates Ramírez"
-          style={{ width: '100px', height: '100px', objectFit: 'contain', marginBottom: '1rem' }}
-        />
-        <h1 style={{ color: '#2e7d32' }}>Aguacates Ramírez</h1>
-        <h2>Iniciar sesión</h2>
-
-        <form onSubmit={handleLogin} style={{ marginTop: '1.5rem' }}>
-          <div>
-            <label>Email</label><br />
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                borderRadius: '6px',
-                border: '1px solid #ccc',
-                marginBottom: '1rem'
-              }}
-            />
-          </div>
-          <div>
-            <label>Contraseña</label><br />
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                borderRadius: '6px',
-                border: '1px solid #ccc',
-                marginBottom: '1.5rem'
-              }}
-            />
-          </div>
-          <button type="submit" style={{
-            width: '100%',
-            padding: '0.7rem',
-            backgroundColor: '#2e7d32',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontSize: '1rem'
-          }}>
-            Entrar
-          </button>
+        <div style={{ textAlign: 'center' }}>
+          <img src="/aguacate.jpg" alt="Logo" style={{ width: '80px', marginBottom: '1rem' }} />
+          <h2>Aguacates Ramírez</h2>
+          <h3>Iniciar sesión</h3>
+        </div>
+        <form onSubmit={handleLogin}>
+          <label>Email:</label><br />
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            style={inputStyle}
+          /><br />
+          <label>Contraseña:</label><br />
+          <input
+            type="password"
+            value={contrasena}
+            onChange={(e) => setContrasena(e.target.value)}
+            required
+            style={inputStyle}
+          /><br />
+          <button type="submit" style={btnStyle}>Iniciar sesión</button>
         </form>
-
-        {mensaje && (
-          <p style={{ marginTop: '1rem', color: mensaje.includes('❌') ? 'red' : 'green' }}>
-            {mensaje}
-          </p>
-        )}
+        {mensaje && <p style={{ marginTop: '1rem', color: 'red', textAlign: 'center' }}>{mensaje}</p>}
       </div>
     </div>
   );
 }
+
+const inputStyle = {
+  width: '100%',
+  padding: '0.5rem',
+  marginTop: '0.3rem',
+  marginBottom: '1rem',
+  borderRadius: '6px',
+  border: '1px solid #ccc'
+};
+
+const btnStyle = {
+  width: '100%',
+  padding: '0.6rem',
+  backgroundColor: '#2e7d32',
+  color: '#fff',
+  border: 'none',
+  borderRadius: '6px',
+  cursor: 'pointer'
+};
 
 export default Login;

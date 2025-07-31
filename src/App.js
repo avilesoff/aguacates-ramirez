@@ -1,18 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import Select from 'react-select';
+import Login from './Login'; // IMPORTANTE
 
 function App() {
+  const [usuario, setUsuario] = useState(null);
   const [cliente, setCliente] = useState('');
   const [clienteNuevo, setClienteNuevo] = useState('');
   const [telefonoNuevo, setTelefonoNuevo] = useState('');
   const [clientesRegistrados, setClientesRegistrados] = useState([]);
-  const [lineas, setLineas] = useState([
-    { tipo: '', toneladas: '' }
-  ]);
+  const [lineas, setLineas] = useState([{ tipo: '', toneladas: '' }]);
   const [mensaje, setMensaje] = useState('');
 
   const tiposDisponibles = ['Flor Loca', 'Negro', 'Desecho'];
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUsuario(user);
+    });
+  }, []);
 
   useEffect(() => {
     const cargarClientes = async () => {
@@ -30,6 +36,10 @@ function App() {
 
     cargarClientes();
   }, []);
+
+  if (!usuario) {
+    return <Login onLogin={(user) => setUsuario(user)} />;
+  }
 
   const handleLineaChange = (index, campo, valor) => {
     const nuevasLineas = [...lineas];
@@ -126,6 +136,23 @@ function App() {
           <h1 style={{ color: '#2e7d32' }}>Aguacates Ramírez</h1>
         </div>
 
+        <button
+          onClick={async () => {
+            await supabase.auth.signOut();
+            setUsuario(null);
+          }}
+          style={{
+            backgroundColor: '#ccc',
+            border: 'none',
+            padding: '0.5rem',
+            borderRadius: '6px',
+            marginBottom: '1rem',
+            cursor: 'pointer'
+          }}
+        >
+          Cerrar sesión
+        </button>
+
         <h2 style={{ textAlign: 'center' }}>Recepción de Aguacate</h2>
 
         <form onSubmit={handleSubmit}>
@@ -189,7 +216,7 @@ function App() {
                 value={linea.tipo}
                 onChange={(e) => handleLineaChange(index, 'tipo', e.target.value)}
                 required
-                style={inputEstilo}
+              style={{ ...inputEstilo, marginBottom: '1rem' }}
               >
                 <option value="">Selecciona tipo</option>
                 {tiposDisponibles.map((tipo) => (
@@ -204,21 +231,36 @@ function App() {
                 value={linea.toneladas}
                 onChange={(e) => handleLineaChange(index, 'toneladas', e.target.value)}
                 required
-                style={inputEstilo}
+                style={{
+                width: '50%',
+                padding: '0.3rem 0.4rem',
+                marginBottom: '0.4rem',
+                borderRadius: '6px',
+                border: '1px solid #ccc',
+                fontSize: '0.9rem',
+                height: '34px'
+  }}
               />
 
               {lineas.length > 1 && (
-                <button type="button" onClick={() => eliminarLinea(index)} style={{
-                  marginTop: '0.5rem',
-                  backgroundColor: '#ccc',
-                  border: 'none',
-                  padding: '0.5rem',
-                  borderRadius: '6px',
-                  cursor: 'pointer'
-                }}>
-                  Eliminar esta línea
-                </button>
-              )}
+  <div style={{ marginTop: '0.5rem' }}>
+    <button
+      type="button"
+      onClick={() => eliminarLinea(index)}
+      style={{
+        backgroundColor: '#ccc',
+        border: 'none',
+        padding: '0.5rem',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        display: 'block'
+      }}
+    >
+      Eliminar esta línea
+    </button>
+  </div>
+)}
+
             </div>
           ))}
 
