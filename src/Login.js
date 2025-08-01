@@ -1,23 +1,50 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 
-function Login({ onLogin }) {
+function Login() {
   const [email, setEmail] = useState('');
   const [contrasena, setContrasena] = useState('');
   const [mensaje, setMensaje] = useState('');
+  const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    const { data, error } = await supabase.auth.signInWithPassword({
+    setMensaje('');
+
+    const { data: sessionData, error } = await supabase.auth.signInWithPassword({
       email,
       password: contrasena,
     });
 
     if (error) {
       setMensaje('❌ Error al iniciar sesión: ' + error.message);
+      return;
+    }
+
+    const userId = sessionData.user?.id;
+    if (userId) {
+      const { data: perfil, error: errorPerfil } = await supabase
+        .from('profiles')
+        .select('rol')
+        .eq('id', userId)
+        .single();
+
+      if (errorPerfil || !perfil) {
+        setMensaje('❌ No se pudo obtener el perfil del usuario.');
+        return;
+      }
+
+      const rol = perfil.rol;
+      if (rol === 'recepcion') {
+        navigate('/recepcion', { replace: true });
+      } else if (rol === 'clasificacion') {
+        navigate('/clasificacion-entrega', { replace: true });
+      } else {
+        setMensaje('❌ Rol desconocido.');
+      }
     } else {
-      setMensaje('');
-      onLogin(data.user);
+      setMensaje('❌ No se pudo obtener el ID del usuario.');
     }
   };
 
