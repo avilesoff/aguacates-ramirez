@@ -50,9 +50,7 @@ export default function ClasificacionEntrega() {
     const id = parseInt(e.target.value);
     const recepcion = recepciones.find(r => r.id === id);
     setRecepcionSeleccionada(recepcion);
-    if (recepcion) {
-      setKilosRecibidos(recepcion.kilos || 0);
-    }
+    setKilosRecibidos(recepcion?.kilos || 0);
   };
 
   const handleInputChange = (calibre, campo, valor) => {
@@ -67,6 +65,7 @@ export default function ClasificacionEntrega() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
     if (!recepcionSeleccionada) {
       setMensaje('❌ Debes seleccionar una entrega.');
       return;
@@ -102,6 +101,13 @@ export default function ClasificacionEntrega() {
       return;
     }
 
+    const totalClasificadoKg = registros.reduce((acc, r) => acc + r.kg, 0);
+
+    if (totalClasificadoKg > kilosRecibidos) {
+      setMensaje(`❌ No puedes clasificar más de ${kilosRecibidos.toLocaleString()} kg. Ya sumaste ${totalClasificadoKg.toLocaleString()} kg.`);
+      return;
+    }
+
     const { error } = await supabase.from('clasificacion').insert(registros);
     if (error) {
       setMensaje('❌ Error al guardar: ' + error.message);
@@ -117,11 +123,6 @@ export default function ClasificacionEntrega() {
     await supabase.auth.signOut();
     navigate('/login');
   };
-
-  const totalKg = calibres.reduce(
-    (sum, cal) => sum + parseFloat(clasificaciones[cal]?.kg || 0),
-    0
-  );
 
   const thEstilo = {
     padding: '0.6rem',
@@ -141,6 +142,11 @@ export default function ClasificacionEntrega() {
     border: '1px solid #ccc',
     textAlign: 'center'
   };
+
+  const totalKg = calibres.reduce(
+    (sum, cal) => sum + parseFloat(clasificaciones[cal]?.kg || 0),
+    0
+  );
 
   return (
     <div style={{
@@ -186,7 +192,7 @@ export default function ClasificacionEntrega() {
                 const yaClasificada = clasificados.has(r.id);
                 return (
                   <option key={r.id} value={r.id}>
-                    {r.cliente_nombre} – {fechaStr} – {r.kilos?.toLocaleString()} KG
+                    {r.cliente_nombre} – {fechaStr} – {r.kilos.toLocaleString()} KG
                     {yaClasificada ? ' ✅' : ''}
                   </option>
                 );
@@ -247,7 +253,7 @@ export default function ClasificacionEntrega() {
           </div>
 
           <p style={{ textAlign: 'right', fontWeight: 'bold', marginTop: '0.5rem' }}>
-            Total KG: {totalKg.toLocaleString(undefined, { minimumFractionDigits: 2 })} KG
+            Total KG clasificados: {totalKg.toLocaleString(undefined, { minimumFractionDigits: 2 })} KG
           </p>
 
           <button
