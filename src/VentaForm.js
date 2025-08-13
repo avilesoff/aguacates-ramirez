@@ -21,20 +21,36 @@ export default function VentaForm() {
   // ✅ recepciones que YA tienen una venta registrada
   const [recepcionesConVenta, setRecepcionesConVenta] = useState(new Set());
 
-  // Cargar clasificaciones pendientes y recepciones con venta
+  // Cargar clasificaciones pendientes y recepciones con venta (con DEDUP por recepcion_id)
   useEffect(() => {
     const cargar = async () => {
-      // Clasificaciones agrupadas no finalizadas (con recepcion_id)
+      // Clasificaciones agrupadas no finalizadas
       const { data: cls, error: errCls } = await supabase
         .from('clasificaciones_agrupadas')
-        .select('*')
-        .eq('finalizado', false);
+        .select('recepcion_id, cliente_nombre, fecha, total_kg, detalles, finalizado')
+        .eq('finalizado', false)
+        .order('fecha', { ascending: false });
 
-      if (!errCls && cls) {
-        const filtradas = cls.filter(c => c.recepcion_id !== null);
-        setClasificaciones(filtradas);
-      } else if (errCls) {
+      if (errCls) {
         console.error(errCls);
+      } else {
+        // Filtrar nulos y deduplicar por recepcion_id (una sola opción por recepción)
+        const dedup = new Map();
+        for (const row of (cls || [])) {
+          if (!row?.recepcion_id) continue;
+          const key = String(row.recepcion_id);
+
+          if (!dedup.has(key)) {
+            dedup.set(key, row);
+          } else {
+            // Si llegan varias filas de la misma recepción, conservar la que tenga más detalles
+            const prev = dedup.get(key);
+            const lenPrev = Array.isArray(prev?.detalles) ? prev.detalles.length : 0;
+            const lenRow  = Array.isArray(row?.detalles) ? row.detalles.length : 0;
+            dedup.set(key, lenRow > lenPrev ? row : prev);
+          }
+        }
+        setClasificaciones(Array.from(dedup.values()));
       }
 
       // Ventas que ya apuntan a una recepción (para poner la ✅ y bloquear)
@@ -43,11 +59,13 @@ export default function VentaForm() {
         .select('recepcion_id')
         .not('recepcion_id', 'is', null);
 
-      if (!errVen && ven) {
-        const setIds = new Set(ven.map(v => Number(v.recepcion_id)).filter(Boolean));
-        setRecepcionesConVenta(setIds);
-      } else if (errVen) {
+      if (errVen) {
         console.error(errVen);
+      } else {
+        const setIds = new Set(
+          (ven || []).map(v => Number(v.recepcion_id)).filter(Boolean)
+        );
+        setRecepcionesConVenta(setIds);
       }
     };
 
