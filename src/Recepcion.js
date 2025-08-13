@@ -37,11 +37,10 @@ function App() {
         .order('cliente_nombre', { ascending: true });
 
       if (!error && data) {
-        const unicos = [...new Set(data.map(item => item.cliente_nombre.trim()))];
+        const unicos = [...new Set(data.map(item => (item.cliente_nombre || '').trim()).filter(Boolean))];
         setClientesRegistrados(unicos);
       }
     };
-
     cargarClientes();
   }, []);
 
@@ -90,13 +89,23 @@ function App() {
       }
     }
 
+    // Generar entrega_id (mismo para todas las filas de esta recepción)
+    const entregaId =
+      (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    // const timestamp = new Date().toISOString(); // opcional: timestamp uniforme
+
     const registros = lineas
       .filter((linea) => linea.tipo && linea.kilos)
       .map((linea) => ({
+        entrega_id: entregaId,
         cliente_nombre: nombreClienteFinal,
         tipo: linea.tipo,
         kilos: parseFloat(linea.kilos),
         telefono_cliente: cliente === '__nuevo__' ? telefonoNuevo : null,
+        // fecha_hora: timestamp,
       }));
 
     if (registros.length === 0) {
@@ -117,10 +126,7 @@ function App() {
     }
   };
 
-  const totalKilos = lineas.reduce(
-    (sum, linea) => sum + parseFloat(linea.kilos || 0),
-    0
-  );
+  const totalKilos = lineas.reduce((sum, linea) => sum + parseFloat(linea.kilos || 0), 0);
   const totalToneladas = (totalKilos / 1000).toFixed(2);
 
   return (
@@ -179,9 +185,7 @@ function App() {
                 ? { label: cliente === '__nuevo__' ? '➕ Nuevo cliente' : cliente, value: cliente }
                 : null
             }
-            onChange={(selectedOption) => {
-              setCliente(selectedOption.value);
-            }}
+            onChange={(opt) => setCliente(opt ? opt.value : '')}
             placeholder="Selecciona un cliente"
             isSearchable
           />
@@ -250,7 +254,7 @@ function App() {
                     padding: '0.3rem 0.4rem',
                     marginBottom: '0.4rem',
                     borderRadius: '6px',
-                    border: '1px solid #ccc',
+                    border: '1px solid #ccc',   // <-- CORREGIDO
                     fontSize: '0.9rem',
                     height: '34px'
                   }}
