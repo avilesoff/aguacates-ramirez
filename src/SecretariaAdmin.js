@@ -56,103 +56,191 @@ export default function SecretariaAdmin() {
     }
   }
 
-  // ===== PDF (look VentasAdmin) =====
+  // ===== PDF (por tipo_origen + anticipo y saldo pendiente) =====
   const descargarPDF = async (venta) => {
     let productos;
     try {
-      if (typeof venta.productos === 'string') productos = JSON.parse(venta.productos);
-      else if (Array.isArray(venta.productos)) productos = venta.productos;
-      else return alert(`❌ La venta #${venta.numero_nota} no tiene detalles para PDF.`);
+      if (typeof venta.productos === "string") {
+        productos = JSON.parse(venta.productos);
+      } else if (Array.isArray(venta.productos)) {
+        productos = venta.productos;
+      } else {
+        return alert(`❌ La venta #${venta.numero_nota} no tiene detalles para PDF.`);
+      }
     } catch {
       return alert(`❌ La venta #${venta.numero_nota} tiene formato incorrecto.`);
     }
 
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
     const margin = 14;
     const verde = [46, 125, 50];
     const verdeSuave = [238, 245, 238];
 
-    // Header
-    const logoX = margin, logoY = 16, logoW = 24, logoH = 24;
-    const gap = 6;
+    // === Encabezado ===
+    const logoX = margin, logoY = 16, logoW = 24, logoH = 24, gap = 6;
     const boxW = 56, boxH = 16;
     const boxX = pageW - margin - boxW, boxY = 16;
 
-    const logoData = await loadImageAsDataURL('/aguacate.jpg');
-    if (logoData) doc.addImage(logoData, 'JPEG', logoX, logoY - 2, logoW, logoH);
+    const logoData = await loadImageAsDataURL("/aguacate.jpg");
+    if (logoData) doc.addImage(logoData, "JPEG", logoX, logoY - 2, logoW, logoH);
 
     const titleLeft = logoX + logoW + gap;
     const titleRight = boxX - gap;
-    const titleW = Math.max(60, titleRight - titleLeft);
-    const titleCenterX = titleLeft + titleW / 2;
+    const titleCenterX = (titleLeft + titleRight) / 2;
 
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
-    doc.text('Aguacates Ramírez', titleCenterX, 22, { align: 'center' });
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("Aguacates Ramírez", titleCenterX, 22, { align: "center" });
 
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-    const l1 = doc.splitTextToSize('Registro SAGARPA: EMP0416058459/2021', titleW);
-    const l2 = doc.splitTextToSize('Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro', titleW);
-    doc.text(l1, titleCenterX, 28, { align: 'center' });
-    doc.text(l2, titleCenterX, 34, { align: 'center' });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("Registro SAGARPA: EMP0416058459/2021", titleCenterX, 28, { align: "center" });
+    doc.text("Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro", titleCenterX, 34, { align: "center" });
 
-    // Box derecha
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
-    doc.text('Nota de Venta', boxX, boxY - 2);
-    doc.setDrawColor(0); doc.setLineWidth(0.3); doc.rect(boxX, boxY, boxW, boxH);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-    doc.text('Folio:', boxX + 3, boxY + 6);
-    doc.setFont('helvetica', 'bold'); doc.text(fmtFolio(venta.numero_nota), boxX + 24, boxY + 6);
-    doc.setFont('helvetica', 'normal'); doc.text(`Fecha: ${fmtFecha(venta.fecha)}`, boxX + 3, boxY + 12);
+    // === Caja lateral ===
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Nota de Compra", boxX, boxY - 2);
+    doc.setDrawColor(0);
+    doc.rect(boxX, boxY, boxW, boxH);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("Folio:", boxX + 3, boxY + 6);
+    doc.setFont("helvetica", "bold");
+    doc.text(fmtFolio(venta.numero_nota), boxX + 24, boxY + 6);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Fecha: ${fmtFecha(venta.fecha)}`, boxX + 3, boxY + 12);
 
-    // Datos cliente
+    // === Datos del cliente ===
     let y = Math.max(logoY + logoH + 12, boxY + boxH + 12);
-    const line = (label, value) => { doc.text(`${label}: ${value || '-'}`, margin, y); y += 6; };
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Datos del cliente", margin, y);
+    y += 10;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`Cliente: ${venta.nombre_cliente}`, margin, y);
+    y += 10;
 
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
-    doc.text('Datos del cliente', margin, y); y += 10;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-    line('Cliente', venta.nombre_cliente);
-    line('Domicilio', venta.domicilio);
-    line('Ciudad', venta.ciudad);
-    line('Placas', venta.placas);
+    // === Agrupar productos por el tipo original de la clasificación ===
+    const grupos = {};
+    (productos || []).forEach((p) => {
+      const claveGrupo =
+        (p.tipo_origen && String(p.tipo_origen).trim()) ||
+        (p.tipo && String(p.tipo).trim()) ||
+        (p.descripcion && String(p.descripcion).trim()) ||
+        (p.calibre && String(p.calibre).trim()) ||
+        "Sin tipo";
 
-    // Tabla
-    autoTable(doc, {
-      startY: y + 10,
-      head: [['Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
-      body: productos.map(p => [
-        Number(p.kg || 0).toFixed(0),
-        String(p.descripcion ?? p.calibre ?? '-'),
-        money(p.precio_unitario),
-        money(p.importe)
-      ]),
-      styles: { fontSize: 10, cellPadding: 2 },
-      headStyles: { fillColor: verde, textColor: 255 },
-      alternateRowStyles: { fillColor: verdeSuave },
-      columnStyles: {
-        0: { halign: 'right', cellWidth: 32 },
-        1: { cellWidth: 'auto' },
-        2: { halign: 'right', cellWidth: 35 },
-        3: { halign: 'right', cellWidth: 35 }
-      },
-      theme: 'striped',
-      margin: { left: margin, right: margin }
+      if (!grupos[claveGrupo]) grupos[claveGrupo] = [];
+      grupos[claveGrupo].push(p);
     });
 
-    const total = productos.reduce((acc, p) => acc + parseFloat(p.importe || 0), 0);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
-    doc.text(`Total: ${money(total)}`, pageW - margin, doc.lastAutoTable.finalY + 10, { align: 'right' });
+    let totalGeneralKg = 0;
+    let totalGeneralImporte = 0;
 
-    // Footer
-    const pageCount = doc.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-      doc.text(`Página ${i} de ${pageCount}`, pageW - margin, pageH - 8, { align: 'right' });
+    for (const tituloGrupo in grupos) {
+      const items = grupos[tituloGrupo];
+
+      // Recalcula subtotales con fallbacks seguros
+      let subtotalKg = 0;
+      let subtotalImporte = 0;
+
+      items.forEach((p) => {
+        const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
+        const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
+        const importe = Number(p.importe ?? kg * precio) || 0;
+        subtotalKg += kg;
+        subtotalImporte += importe;
+      });
+
+      totalGeneralKg += subtotalKg;
+      totalGeneralImporte += subtotalImporte;
+
+      // === Encabezado del grupo ===
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(46, 125, 50);
+      doc.text(`Tipo: ${tituloGrupo}`, margin, y + 5);
+      doc.setTextColor(0);
+      y += 10;
+
+      // === Tabla del grupo ===
+      autoTable(doc, {
+        startY: y,
+        head: [["Cantidad (kg)", "Descripción", "Precio unitario", "Importe"]],
+        body: items.map((p) => {
+          const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
+          const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
+          const importe = Number(p.importe ?? kg * precio) || 0;
+          const descripcion = String(p.descripcion ?? p.calibre ?? p.tipo ?? "-");
+          return [kg.toFixed(0), descripcion, money(precio), money(importe)];
+        }),
+        styles: { fontSize: 10, cellPadding: 2 },
+        headStyles: { fillColor: verde, textColor: 255 },
+        alternateRowStyles: { fillColor: verdeSuave },
+        columnStyles: {
+          0: { halign: "right", cellWidth: 32 },
+          1: { cellWidth: "auto" },
+          2: { halign: "right", cellWidth: 35 },
+          3: { halign: "right", cellWidth: 35 },
+        },
+        theme: "striped",
+        margin: { left: margin, right: margin },
+      });
+
+      // Subtotal del grupo
+      y = doc.lastAutoTable.finalY + 6;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(
+        `Subtotal ${tituloGrupo}: ${subtotalKg.toLocaleString()} kg — ${money(subtotalImporte)}`,
+        pageW - margin,
+        y,
+        { align: "right" }
+      );
+      y += 10;
     }
 
-    doc.save(`nota_venta_${fmtFolio(venta.numero_nota)}.pdf`);
+    // === Total general + anticipo/saldo ===
+    const anticipo = parseFloat(venta.anticipo || 0);
+    const saldo = totalGeneralImporte - anticipo;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text(
+      `Total General: ${totalGeneralKg.toLocaleString()} kg — ${money(totalGeneralImporte)}`,
+      pageW - margin,
+      y + 4,
+      { align: "right" }
+    );
+
+    if (anticipo > 0) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.text(`Anticipo: ${money(anticipo)}`, pageW - margin, y + 10, { align: "right" });
+      doc.setFont("helvetica", "bold");
+      doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, y + 16, { align: "right" });
+    }
+
+    // === Footer ===
+    const pageCount = doc.getNumberOfPages();
+    const fechaHoy = fmtFecha(new Date());
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(
+        `Documento generado automáticamente por el sistema EMPAQUE RAMÍREZ — ${fechaHoy}`,
+        margin,
+        pageH - 8
+      );
+      doc.text(`Página ${i} de ${pageCount}`, pageW - margin, pageH - 8, { align: "right" });
+    }
+
+    doc.save(`nota_compra_${fmtFolio(venta.numero_nota)}.pdf`);
   };
 
   // ===== Rango por mes =====
@@ -512,6 +600,7 @@ export default function SecretariaAdmin() {
                   <th style={th}>Folio</th>
                   <th style={th}>Fecha</th>
                   <th style={th}>Cliente</th>
+                  <th style={th}>Anticipo</th>
                   <th style={th}>Total</th>
                   <th style={th}>Acciones</th>
                 </tr>
@@ -521,6 +610,12 @@ export default function SecretariaAdmin() {
                   const editing = edit.tabla === 'ventas' && edit.id === v.id;
                   const row = editing ? edit.data : v;
                   const hovered = hoverRow === i;
+                  const money = (n) =>
+                    new Intl.NumberFormat('es-MX', {
+                      style: 'currency',
+                      currency: 'MXN',
+                    }).format(Number(n || 0));
+
                   return (
                     <tr
                       key={v.id}
@@ -529,24 +624,32 @@ export default function SecretariaAdmin() {
                       onMouseLeave={() => setHoverRow(null)}
                     >
                       <td style={td}>{fmtFolio(v.numero_nota)}</td>
-                      <td style={td}>
-                        {editing ? (
-                          <Field
-                            type="date"
-                            value={row.fecha}
-                            onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, fecha: val } }))}
-                          />
-                        ) : fmtFecha(v.fecha)}
-                      </td>
+                      <td style={td}>{fmtFecha(v.fecha)}</td>
                       <td style={td}>
                         {editing ? (
                           <Field
                             value={row.nombre_cliente}
-                            onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, nombre_cliente: val } }))}
+                            onChange={(val) =>
+                              setEdit((e) => ({
+                                ...e,
+                                data: { ...e.data, nombre_cliente: val },
+                              }))
+                            }
                           />
-                        ) : v.nombre_cliente}
+                        ) : (
+                          v.nombre_cliente
+                        )}
                       </td>
-                      <td style={{ ...td, textAlign: 'right' }}>{money(v.total)}</td>
+
+                      {/* Anticipo */}
+                      <td style={{ ...td, textAlign: 'right' }}>
+                        {money(v.anticipo || 0)}
+                      </td>
+
+                      <td style={{ ...td, textAlign: 'right' }}>
+                        {money(v.total || 0)}
+                      </td>
+
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
                         {editing ? (
                           <>
@@ -555,9 +658,26 @@ export default function SecretariaAdmin() {
                           </>
                         ) : (
                           <>
-                            <button onClick={async () => { await descargarPDF(v); }} style={btnPDF}>📄 PDF</button>
-                            <button onClick={() => startEdit('ventas', v)} style={btnEditar}>✏️</button>
-                            <button onClick={() => removeRow('ventas', v.id)} style={btnEliminar}>🗑️</button>
+                            <button
+                              onClick={async () => {
+                                await descargarPDF(v);
+                              }}
+                              style={btnPDF}
+                            >
+                              📄 PDF
+                            </button>
+                            <button
+                              onClick={() => startEdit('ventas', v)}
+                              style={btnEditar}
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              onClick={() => removeRow('ventas', v.id)}
+                              style={btnEliminar}
+                            >
+                              🗑️
+                            </button>
                           </>
                         )}
                       </td>

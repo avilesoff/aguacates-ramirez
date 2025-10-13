@@ -7,162 +7,192 @@ export default function VentaForm() {
 
   const [datosCliente, setDatosCliente] = useState({
     nombre: '',
-    domicilio: '',
-    ciudad: '',
-    placas: '',
-    fecha: new Date().toISOString().split('T')[0]
+    fecha: new Date().toISOString().split('T')[0],
   });
 
-  const [productos, setProductos] = useState([]);
+  const [anticipo, setAnticipo] = useState(0);
+  const [productosPorTipo, setProductosPorTipo] = useState({});
   const [mensaje, setMensaje] = useState('');
   const [clasificaciones, setClasificaciones] = useState([]);
-  const [clasificacionSeleccionada, setClasificacionSeleccionada] = useState(null); // string
-
-  // ✅ recepciones que YA tienen una venta registrada
+  const [clasificacionSeleccionada, setClasificacionSeleccionada] = useState('');
   const [recepcionesConVenta, setRecepcionesConVenta] = useState(new Set());
 
-  // Cargar clasificaciones pendientes y recepciones con venta (con DEDUP por recepcion_id)
+  // Opciones para el select de descripción
+  const OPCIONES_CALIBRE = [
+    'SUPER','EXTRA','1RA','2DA','3RA','4TA','4TA ROÑA','CLASE B','PROCESO','DESECHO',
+  ];
+
+  const fmtFecha = (v) => {
+    if (!v) return '';
+    const d = new Date(v);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  // ------------ Helpers de carga/refresco ------------
+  const refetchVentas = async () => {
+    const { data: ven, error: errVen } = await supabase
+      .from('ventas')
+      .select('recepcion_id, clasificacion_entrega_id');
+
+    if (!errVen && ven) {
+      const setIds = new Set();
+      for (const v of ven || []) {
+        if (v.recepcion_id != null) setIds.add(String(v.recepcion_id));
+        if (v.clasificacion_entrega_id) setIds.add(String(v.clasificacion_entrega_id));
+      }
+      setRecepcionesConVenta(setIds);
+    }
+  };
+
+  const refetchClasificacion = async () => {
+    const { data: cls, error: errCls } = await supabase
+      .from('clasificacion')
+      .select('entrega_id, cliente_nombre, fecha, kg, finalizado')
+      .order('fecha', { ascending: false });
+
+    if (errCls) {
+      console.error('Error cargando clasificaciones:', errCls.message);
+      setClasificaciones([]);
+      return;
+    }
+
+    const mapa = new Map();
+    for (const row of cls || []) {
+      const key = row.entrega_id;
+      if (!key) continue;
+
+      const actual = mapa.get(key) || {
+        recepcion_id: key, // usamos entrega_id como id
+        cliente_nombre: row.cliente_nombre,
+        fecha: row.fecha,
+        total_kg: 0,
+        finalizado: !!row.finalizado,
+      };
+      actual.total_kg += parseFloat(row.kg) || 0;
+      if (!actual.fecha || new Date(row.fecha) > new Date(actual.fecha)) {
+        actual.fecha = row.fecha;
+      }
+      actual.finalizado = actual.finalizado || !!row.finalizado;
+      mapa.set(key, actual);
+    }
+    setClasificaciones(Array.from(mapa.values()));
+  };
+
+  // ------------ Carga inicial ------------
   useEffect(() => {
-    const cargar = async () => {
-      // Clasificaciones agrupadas no finalizadas
-      const { data: cls, error: errCls } = await supabase
-        .from('clasificaciones_agrupadas')
-        .select('recepcion_id, cliente_nombre, fecha, total_kg, detalles, finalizado')
-        .eq('finalizado', false)
-        .order('fecha', { ascending: false });
-
-      if (errCls) {
-        console.error(errCls);
-      } else {
-        // Filtrar nulos y deduplicar por recepcion_id (una sola opción por recepción)
-        const dedup = new Map();
-        for (const row of (cls || [])) {
-          if (!row?.recepcion_id) continue;
-          const key = String(row.recepcion_id);
-
-          if (!dedup.has(key)) {
-            dedup.set(key, row);
-          } else {
-            // Si llegan varias filas de la misma recepción, conservar la que tenga más detalles
-            const prev = dedup.get(key);
-            const lenPrev = Array.isArray(prev?.detalles) ? prev.detalles.length : 0;
-            const lenRow  = Array.isArray(row?.detalles) ? row.detalles.length : 0;
-            dedup.set(key, lenRow > lenPrev ? row : prev);
-          }
-        }
-        setClasificaciones(Array.from(dedup.values()));
-      }
-
-      // Ventas que ya apuntan a una recepción (para poner la ✅ y bloquear)
-      const { data: ven, error: errVen } = await supabase
-        .from('ventas')
-        .select('recepcion_id')
-        .not('recepcion_id', 'is', null);
-
-      if (errVen) {
-        console.error(errVen);
-      } else {
-        const setIds = new Set(
-          (ven || []).map(v => Number(v.recepcion_id)).filter(Boolean)
-        );
-        setRecepcionesConVenta(setIds);
-      }
-    };
-
-    cargar();
+    (async () => {
+      await Promise.all([refetchClasificacion(), refetchVentas()]);
+    })();
   }, []);
 
-  const handleSeleccionClasificacion = (e) => {
-    const idStr = e.target.value; // select devuelve string
+  // ------------ Al seleccionar una clasificación ------------
+  const handleSeleccionClasificacion = async (e) => {
+    const idStr = e.target.value; // entrega_id (puede ser UUID)
+    setClasificacionSeleccionada(idStr);
+
+    setMensaje('');
+    setProductosPorTipo({});
+
     if (!idStr) {
-      setClasificacionSeleccionada(null);
-      setProductos([]);
       setDatosCliente(prev => ({ ...prev, nombre: '' }));
       return;
     }
 
-    const idNum = Number(idStr);
-    const seleccionada = clasificaciones.find(c => Number(c.recepcion_id) === idNum);
-    if (!seleccionada) return;
-
-    setClasificacionSeleccionada(idStr);
+    const seleccionada = clasificaciones.find(c => String(c.recepcion_id) === String(idStr));
+    if (!seleccionada) {
+      setMensaje('❌ No se encontró la clasificación seleccionada.');
+      return;
+    }
 
     setDatosCliente(prev => ({
       ...prev,
       nombre: seleccionada.cliente_nombre,
-      fecha: seleccionada.fecha
+      fecha: seleccionada.fecha,
     }));
 
-    const detalles = Array.isArray(seleccionada.detalles) ? seleccionada.detalles : [];
-    const productosDesdeClasificacion = detalles.map((det, i) => ({
-      id: `${idStr}-${i}`,
-      cantidad: det.kilos,
-      descripcion: det.calibre,
-      precio: '',
-      importe: 0
-    }));
+    const { data: registros, error } = await supabase
+      .from('clasificacion')
+      .select('tipo, calibre, kg')
+      .eq('entrega_id', idStr);
 
-    setProductos(productosDesdeClasificacion);
-  };
-
-  const handleCambioCliente = (e) => {
-    const { name, value } = e.target;
-    setDatosCliente(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleCambioProducto = (index, campo, valor) => {
-    const nuevos = [...productos];
-    nuevos[index][campo] = valor;
-    const cantidad = parseFloat(nuevos[index].cantidad) || 0;
-    const precio = parseFloat(nuevos[index].precio) || 0;
-    nuevos[index].importe = cantidad * precio;
-    setProductos(nuevos);
-  };
-
-  const agregarFila = () => {
-    setProductos([
-      ...productos,
-      {
-        id: `manual-${Date.now()}`,
-        cantidad: '',
-        descripcion: '',
-        precio: '',
-        importe: 0
-      }
-    ]);
-  };
-
-  const eliminarFila = (index) => {
-    const nuevos = [...productos];
-    nuevos.splice(index, 1);
-    setProductos(nuevos);
-  };
-
-  const total = productos.reduce((sum, p) => sum + (parseFloat(p.importe) || 0), 0);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    // 🛑 Bloqueo doble: no permitir si la recepción ya tiene venta
-    const recId = clasificacionSeleccionada ? Number(clasificacionSeleccionada) : null;
-    if (recId && recepcionesConVenta.has(recId)) {
-      setMensaje('❌ Esta clasificación ya tiene una venta registrada.');
+    if (error) {
+      console.error('Error cargando detalles de clasificacion:', error.message);
+      setMensaje('❌ Error al cargar la clasificación.');
       return;
     }
 
-    const filasValidas = productos
-      .filter(p => p.descripcion && parseFloat(p.cantidad) > 0 && parseFloat(p.precio) > 0)
-      .map(p => {
-        const kg = parseFloat(p.cantidad);
-        const precio = parseFloat(p.precio);
-        const importe = kg * precio;
-        return {
+    if (!registros || !registros.length) {
+      setMensaje('⚠️ No hay datos válidos en la clasificación seleccionada.');
+      return;
+    }
+
+    // Agrupar por tipo y calibre
+    const porTipo = {};
+    for (const reg of registros) {
+      const tipo = reg.tipo || 'SIN TIPO';
+      const calibre = reg.calibre || 'Sin calibre';
+      const kilos = parseFloat(reg.kg) || 0;
+
+      if (!porTipo[tipo]) porTipo[tipo] = {};
+      if (!porTipo[tipo][calibre]) porTipo[tipo][calibre] = 0;
+      porTipo[tipo][calibre] += kilos;
+    }
+
+    const resultado = {};
+    Object.keys(porTipo).forEach(tipo => {
+      resultado[tipo] = Object.entries(porTipo[tipo]).map(([descripcion, cantidad], i) => ({
+        id: `${idStr}-${tipo}-${i}`,
+        cantidad,
+        descripcion,
+        precio: '',
+        importe: 0,
+      }));
+    });
+
+    setProductosPorTipo(resultado);
+  };
+
+  // ------------ Edición de filas ------------
+  const handleCambioProducto = (tipo, index, campo, valor) => {
+    const nuevos = { ...productosPorTipo };
+    const fila = { ...nuevos[tipo][index] };
+
+    fila[campo] = valor;
+    const cantidad = parseFloat(fila.cantidad) || 0;
+    const precio = parseFloat(fila.precio) || 0;
+    fila.importe = cantidad * precio;
+
+    nuevos[tipo][index] = fila;
+    setProductosPorTipo(nuevos);
+  };
+
+  // ------------ Totales ------------
+  const totalGeneral = Object.values(productosPorTipo).flat()
+    .reduce((sum, p) => sum + (parseFloat(p.importe) || 0), 0);
+
+  // ------------ Guardar compra ------------
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    const recId = clasificacionSeleccionada ? String(clasificacionSeleccionada) : null;
+    const esNumerico = recId && /^\d+$/.test(recId);
+    const recepcionIdParaInsert = esNumerico ? Number(recId) : null;
+
+    const filasValidas = Object.entries(productosPorTipo).flatMap(([tipoOrigen, filas]) =>
+      filas
+        .filter(p => p.descripcion && parseFloat(p.cantidad) > 0 && parseFloat(p.precio) > 0)
+        .map(p => ({
+          tipo: p.descripcion,            // para PDF
+          tipo_origen: tipoOrigen,        // bloque origen
           calibre: p.descripcion,
-          kg,
-          precio_unitario: precio,
-          importe
-        };
-      });
+          kg: parseFloat(p.cantidad),
+          precio_unitario: parseFloat(p.precio),
+          importe: parseFloat(p.cantidad) * parseFloat(p.precio),
+        }))
+    );
 
     if (filasValidas.length === 0) {
       setMensaje('❌ Debes ingresar al menos un producto con cantidad, descripción y precio.');
@@ -174,50 +204,52 @@ export default function VentaForm() {
       setMensaje('❌ Error al generar número de nota.');
       return;
     }
-
     const numeroNota = resultado;
 
-    const payload = {
+    const payloadBase = {
       numero_nota: numeroNota,
       fecha: datosCliente.fecha,
-      recepcion_id: recId ?? null,
+      recepcion_id: recepcionIdParaInsert, // null si el id es UUID
       nombre_cliente: datosCliente.nombre,
-      domicilio: datosCliente.domicilio || null,
-      ciudad: datosCliente.ciudad || null,
-      placas: datosCliente.placas || null,
       productos: filasValidas,
-      total: filasValidas.reduce((sum, p) => sum + p.importe, 0)
+      total: filasValidas.reduce((sum, p) => sum + p.importe, 0),
+      anticipo: parseFloat(anticipo) || 0,
     };
 
-    const { error: errorGuardar } = await supabase.from('ventas').insert(payload);
+    const payloadConUUID = {
+      ...payloadBase,
+      clasificacion_entrega_id: !esNumerico ? recId : null, // UUID cuando aplique
+    };
+
+    let errorGuardar;
+    try {
+      ({ error: errorGuardar } = await supabase.from('ventas').insert(payloadConUUID));
+      if (errorGuardar && errorGuardar.code === '42703') {
+        // si no existe la columna, reintenta sin ella
+        ({ error: errorGuardar } = await supabase.from('ventas').insert(payloadBase));
+      }
+    } catch (e2) {
+      errorGuardar = e2;
+    }
 
     if (errorGuardar) {
-      // Si el backend tiene índice único, podemos capturar duplicado:
-      if (errorGuardar.code === '23505') {
-        setMensaje('❌ Ya existe una venta para esta clasificación.');
-      } else {
-        setMensaje('❌ Error al guardar: ' + errorGuardar.message);
-      }
+      setMensaje('❌ Error al guardar: ' + (errorGuardar.message || errorGuardar));
     } else {
-      // ✅ actualiza el set para mostrar la paloma en la lista
+      // 1) Ocúltala de inmediato en la UI
       if (recId) {
         setRecepcionesConVenta(prev => {
-          const next = new Set(prev);
-          next.add(recId);
-          return next;
+          const s = new Set(prev);
+          s.add(String(recId));
+          return s;
         });
       }
+      // 2) Refresca ventas desde la BD para recalcular el set (por si hay cambios/UUID)
+      await refetchVentas();
 
-      setMensaje(`✅ Venta guardada correctamente con nota #${numeroNota}`);
-      setDatosCliente({
-        nombre: '',
-        domicilio: '',
-        ciudad: '',
-        placas: '',
-        fecha: new Date().toISOString().split('T')[0]
-      });
-      setProductos([]);
-      setClasificacionSeleccionada(null);
+      setMensaje(`✅ Compra guardada correctamente con nota #${numeroNota}`);
+      setAnticipo(0);
+      setProductosPorTipo({});
+      setClasificacionSeleccionada('');
     }
   };
 
@@ -226,30 +258,30 @@ export default function VentaForm() {
     navigate('/login');
   };
 
+  // Solo clasificaciones PENDIENTES (sin venta)
+  const clasificacionesPendientes = clasificaciones.filter(c => {
+    const id = String(c.recepcion_id);
+    return !recepcionesConVenta.has(id);
+  });
+
   return (
     <div style={{ padding: '2rem', maxWidth: '900px', margin: 'auto', fontFamily: 'Arial' }}>
-      {/* Encabezado */}
       <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
         <img src="/aguacate.jpg" alt="Logo" style={{ width: '80px', marginBottom: '1rem' }} />
-        <h2 style={{ margin: '0', color: '#2e7d32' }}>
+        <h2 style={{ margin: 0, color: '#2e7d32' }}>
           Aguacates <span style={{ fontWeight: 'bold' }}>Ramírez</span>
         </h2>
         <p style={{ margin: '0.3rem 0' }}>
           <strong>Registro SAGARPA:</strong> <span style={{ color: '#333' }}>EMP0416058459/2021</span>
         </p>
-        <p style={{ margin: '0' }}>Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro</p>
+        <p style={{ margin: 0 }}>Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro</p>
       </div>
 
-      <h3 style={{ textAlign: 'center', color: '#2e7d32' }}>Registro de Venta</h3>
+      <h3 style={{ textAlign: 'center', color: '#2e7d32' }}>Registro de Compra</h3>
 
-      {/* Botones superiores */}
       <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-        <button onClick={() => navigate('/secretaria')} style={botonSecretaria}>
-          📁 Secretaría
-        </button>
-        <button onClick={handleLogout} style={botonCerrarSesion}>
-          🔒 Cerrar sesión
-        </button>
+        <button onClick={() => navigate('/secretaria')} style={botonSecretaria}>📁 Secretaría</button>
+        <button onClick={handleLogout} style={botonCerrarSesion}>🔒 Cerrar sesión</button>
       </div>
 
       <form onSubmit={handleSubmit}>
@@ -258,83 +290,123 @@ export default function VentaForm() {
           <select
             onChange={handleSeleccionClasificacion}
             style={inputEstilo}
-            value={clasificacionSeleccionada || ''}
+            value={clasificacionSeleccionada}
           >
             <option value="">-- Elige una clasificación --</option>
-            {clasificaciones.map((c) => {
-              const id = Number(c.recepcion_id);
-              const yaVendida = recepcionesConVenta.has(id);
-              const label = `${yaVendida ? '✅ ' : ''}${c.fecha} - ${c.cliente_nombre} (${c.total_kg} kg)`;
+            {clasificacionesPendientes.map((c) => {
+              const id = String(c.recepcion_id);
+              const label = `${fmtFecha(c.fecha)} - ${c.cliente_nombre} (${(c.total_kg || 0).toLocaleString()} kg)`;
               return (
-                <option
-                  key={String(c.recepcion_id)}
-                  value={String(c.recepcion_id)}
-                  disabled={yaVendida}     // las ya vendidas quedan deshabilitadas
-                >
+                <option key={id} value={id}>
                   {label}
                 </option>
               );
             })}
           </select>
+          {clasificacionesPendientes.length === 0 && (
+            <small style={{ color: '#777' }}>No hay clasificaciones pendientes de compra.</small>
+          )}
         </div>
 
         <div style={{ display: 'grid', gap: '1rem' }}>
-          <input type="text" name="nombre" placeholder="Nombre" value={datosCliente.nombre} onChange={handleCambioCliente} style={inputEstilo} required />
-          <input type="text" name="domicilio" placeholder="Domicilio" value={datosCliente.domicilio} onChange={handleCambioCliente} style={inputEstilo} />
-          <input type="text" name="ciudad" placeholder="Ciudad" value={datosCliente.ciudad} onChange={handleCambioCliente} style={inputEstilo} />
-          <input type="text" name="placas" placeholder="Placas" value={datosCliente.placas} onChange={handleCambioCliente} style={inputEstilo} />
-          <input type="date" name="fecha" value={datosCliente.fecha} onChange={handleCambioCliente} style={inputEstilo} required />
+          <input
+            type="text"
+            name="nombre"
+            placeholder="Nombre"
+            value={datosCliente.nombre}
+            onChange={(e) => setDatosCliente({ ...datosCliente, nombre: e.target.value })}
+            style={inputEstilo}
+            required
+          />
+          <input
+            type="date"
+            name="fecha"
+            value={datosCliente.fecha}
+            onChange={(e) => setDatosCliente({ ...datosCliente, fecha: e.target.value })}
+            style={inputEstilo}
+            required
+          />
         </div>
 
-        <table style={{ width: '100%', marginTop: '2rem', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#eee' }}>
-              <th>Kilos</th>
-              <th>Descripción</th>
-              <th>Precio</th>
-              <th>Importe</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {productos.map((p, index) => (
-              <tr key={p.id}>
-                <td><input type="number" value={p.cantidad} onChange={e => handleCambioProducto(index, 'cantidad', e.target.value)} style={inputTabla} /></td>
-                <td>
-                  <select value={p.descripcion} onChange={e => handleCambioProducto(index, 'descripcion', e.target.value)} style={inputTabla}>
-                    <option value="">Selecciona</option>
-                    <option value="SUPER">SUPER</option>
-                    <option value="EXTRA">EXTRA</option>
-                    <option value="1RA">1RA</option>
-                    <option value="2DA">2DA</option>
-                    <option value="3RA">3RA</option>
-                    <option value="4TA">4TA</option>
-                    <option value="4TA ROÑA">4TA ROÑA</option>
-                    <option value="CLASE B">CLASE B</option>
-                    <option value="PROCESO">PROCESO</option>
-                    <option value="DESECHO">DESECHO</option>
-                  </select>
-                </td>
-                <td><input type="number" value={p.precio} onChange={e => handleCambioProducto(index, 'precio', e.target.value)} style={inputTabla} /></td>
-                <td style={{ textAlign: 'right' }}>{p.importe.toFixed(2)}</td>
-                <td><button type="button" onClick={() => eliminarFila(index)} style={{ cursor: 'pointer' }}>🗑️</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div style={{ marginTop: '1rem' }}>
+          <label><strong>Anticipo ($):</strong></label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={anticipo}
+            onChange={(e) => setAnticipo(parseFloat(e.target.value) || 0)}
+            style={inputEstilo}
+            placeholder="Ingrese monto del anticipo (opcional)"
+          />
+        </div>
 
-        <button type="button" onClick={agregarFila} style={botonSecundario}>➕ Agregar fila</button>
+        {Object.keys(productosPorTipo).map((tipo) => (
+          <div key={tipo} style={{ marginTop: '2rem' }}>
+            <h4 style={{ color: '#2e7d32' }}>{tipo}</h4>
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.5rem' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#eee' }}>
+                  <th>Kilos</th>
+                  <th>Descripción</th>
+                  <th>Precio</th>
+                  <th>Importe</th>
+                </tr>
+              </thead>
+              <tbody>
+                {productosPorTipo[tipo].map((p, index) => (
+                  <tr key={p.id}>
+                    <td>
+                      <input
+                        type="number"
+                        value={p.cantidad}
+                        onChange={(e) => handleCambioProducto(tipo, index, 'cantidad', e.target.value)}
+                        style={inputTabla}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={p.descripcion || ''}
+                        onChange={(e) => handleCambioProducto(tipo, index, 'descripcion', e.target.value)}
+                        style={selectTabla}
+                      >
+                        <option value="">Selecciona</option>
+                        {!OPCIONES_CALIBRE.includes(p.descripcion) && p.descripcion && (
+                          <option value={p.descripcion}>{p.descripcion}</option>
+                        )}
+                        {OPCIONES_CALIBRE.map(op => (
+                          <option key={op} value={op}>{op}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        value={p.precio}
+                        onChange={(e) => handleCambioProducto(tipo, index, 'precio', e.target.value)}
+                        style={inputTabla}
+                      />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>{p.importe.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
 
-        <p style={{ textAlign: 'right', marginTop: '1rem', fontWeight: 'bold' }}>Total: ${total.toFixed(2)}</p>
+        <h3 style={{ textAlign: 'right', marginTop: '1rem' }}>
+          Total General: ${totalGeneral.toFixed(2)}
+        </h3>
 
-        <button type="submit" style={botonPrincipal}>Guardar venta</button>
+        <button type="submit" style={botonPrincipal}>Guardar compra</button>
       </form>
 
       {mensaje && (
         <p style={{
           marginTop: '1rem',
           textAlign: 'center',
-          color: mensaje.includes('❌') ? 'red' : 'green'
+          color: mensaje.includes('❌') ? 'red' : 'green',
         }}>
           {mensaje}
         </p>
@@ -347,14 +419,22 @@ const inputEstilo = {
   width: '100%',
   padding: '0.5rem',
   border: '1px solid #ccc',
-  borderRadius: '6px'
+  borderRadius: '6px',
 };
 
 const inputTabla = {
   width: '100%',
   padding: '0.3rem',
   borderRadius: '4px',
-  border: '1px solid #ccc'
+  border: '1px solid #ccc',
+};
+
+const selectTabla = {
+  width: '100%',
+  padding: '0.3rem',
+  borderRadius: '4px',
+  border: '1px solid #ccc',
+  backgroundColor: '#fff',
 };
 
 const botonPrincipal = {
@@ -365,17 +445,7 @@ const botonPrincipal = {
   border: 'none',
   borderRadius: '8px',
   fontSize: '1rem',
-  marginTop: '1.5rem'
-};
-
-const botonSecundario = {
-  marginTop: '1rem',
-  padding: '0.5rem 1rem',
-  backgroundColor: '#1976d2',
-  color: '#fff',
-  border: 'none',
-  borderRadius: '6px',
-  cursor: 'pointer'
+  marginTop: '1.5rem',
 };
 
 const botonSecretaria = {
@@ -384,7 +454,7 @@ const botonSecretaria = {
   color: '#fff',
   border: 'none',
   borderRadius: '6px',
-  cursor: 'pointer'
+  cursor: 'pointer',
 };
 
 const botonCerrarSesion = {
@@ -393,5 +463,5 @@ const botonCerrarSesion = {
   color: '#fff',
   border: 'none',
   borderRadius: '6px',
-  cursor: 'pointer'
+  cursor: 'pointer',
 };
