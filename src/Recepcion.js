@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import Select from 'react-select';
 import Login from './Login';
+import { useNavigate } from 'react-router-dom';
 
 function App() {
+  const navigate = useNavigate();
+
   const [usuario, setUsuario] = useState(null);
   const [cliente, setCliente] = useState('');
   const [clienteNuevo, setClienteNuevo] = useState('');
@@ -13,13 +16,16 @@ function App() {
   const [mensaje, setMensaje] = useState('');
 
   const tiposDisponibles = [
-    'Loca Tamaño',
-    'Loca Proceso',
-    'Negro Tamaño',
-    'Negro Proceso',
-    'Aventajado Tamaño',
-    'Aventajado Proceso',
-    'Desecho'
+   'Loca',                 //  NUEVO
+  'Loca Tamaño',
+  'Loca Proceso',
+  'Negro',                //  NUEVO
+  'Negro Tamaño',
+  'Negro Proceso',
+  'Aventajado',           //  NUEVO
+  'Aventajado Tamaño',
+  'Aventajado Proceso',
+  'Desecho'
   ];
 
   useEffect(() => {
@@ -64,6 +70,22 @@ function App() {
     setLineas(nuevasLineas);
   };
 
+  // >>> NUEVO: fecha local con offset (12:00) para evitar saltos de día
+  function localISOWithOffsetAtNoon(d = new Date()) {
+    const yyyy = d.getFullYear();
+    const MM = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+
+    // offset en minutos respecto a UTC (negativo en América)
+    const offsetMin = -d.getTimezoneOffset();
+    const sign = offsetMin >= 0 ? '+' : '-';
+    const oh = String(Math.floor(Math.abs(offsetMin) / 60)).padStart(2, '0');
+    const om = String(Math.abs(offsetMin) % 60).padStart(2, '0');
+
+    // 12:00 local para evitar cruces de día
+    return `${yyyy}-${MM}-${dd}T12:00:00${sign}${oh}:${om}`;
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -95,7 +117,8 @@ function App() {
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-    // const timestamp = new Date().toISOString(); // opcional: timestamp uniforme
+    // >>> NUEVO: calcular una sola vez la "fecha_hora" local con offset (a mediodía)
+    const fechaHoraLocal = localISOWithOffsetAtNoon();
 
     const registros = lineas
       .filter((linea) => linea.tipo && linea.kilos)
@@ -105,7 +128,8 @@ function App() {
         tipo: linea.tipo,
         kilos: parseFloat(linea.kilos),
         telefono_cliente: cliente === '__nuevo__' ? telefonoNuevo : null,
-        // fecha_hora: timestamp,
+        // >>> NUEVO: enviar fecha_hora explícita
+        fecha_hora: fechaHoraLocal
       }));
 
     if (registros.length === 0) {
@@ -156,22 +180,28 @@ function App() {
           <h2 style={{ color: '#2e7d32' }}>Recepción de Aguacate</h2>
         </div>
 
-        <button
-          onClick={async () => {
-            await supabase.auth.signOut();
-            setUsuario(null);
-          }}
-          style={{
-            backgroundColor: '#ccc',
-            border: 'none',
-            padding: '0.5rem 1rem',
-            borderRadius: '6px',
-            marginBottom: '1rem',
-            cursor: 'pointer'
-          }}
-        >
-          Cerrar sesión
-        </button>
+        {/* BOTONES SUPERIORES */}
+        <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginBottom:'1rem', flexWrap:'wrap' }}>
+          <button
+            type="button"
+            onClick={() => navigate('/ventas')}
+            style={btnVolver}
+          >
+            ← Registrar compra
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              setUsuario(null);
+              navigate('/login');
+            }}
+            style={btnCerrar}
+          >
+            🔒 Cerrar sesión
+          </button>
+        </div>
 
         <form onSubmit={handleSubmit}>
           <label>Nombre del cliente:</label><br />
@@ -254,7 +284,7 @@ function App() {
                     padding: '0.3rem 0.4rem',
                     marginBottom: '0.4rem',
                     borderRadius: '6px',
-                    border: '1px solid #ccc',   // <-- CORREGIDO
+                    border: '1px solid #ccc',
                     fontSize: '0.9rem',
                     height: '34px'
                   }}
@@ -343,6 +373,24 @@ const botonSecundario = {
   borderRadius: '8px',
   cursor: 'pointer',
   fontSize: '1rem'
+};
+
+const btnVolver = {
+  padding: '0.45rem 0.9rem',
+  background: '#2e7d32',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 6,
+  cursor: 'pointer'
+};
+
+const btnCerrar = {
+  padding: '0.45rem 0.9rem',
+  background: '#b71c1c',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 6,
+  cursor: 'pointer'
 };
 
 export default App;

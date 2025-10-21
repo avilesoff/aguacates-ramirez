@@ -1,16 +1,27 @@
+// src/VentaForm.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
+
+// Helper: fecha local YYYY-MM-DD (sin UTC)
+function hoyLocalYMD() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export default function VentaForm() {
   const navigate = useNavigate();
 
   const [datosCliente, setDatosCliente] = useState({
     nombre: '',
-    fecha: new Date().toISOString().split('T')[0],
+    // Antes: new Date().toISOString().split('T')[0]  (UTC) — causaba “día siguiente”
+    fecha: hoyLocalYMD(), // ahora es fecha local
   });
 
-  const [anticipo, setAnticipo] = useState(0);
+  const [anticipo, setAnticipo] = useState('');
   const [productosPorTipo, setProductosPorTipo] = useState({});
   const [mensaje, setMensaje] = useState('');
   const [clasificaciones, setClasificaciones] = useState([]);
@@ -19,15 +30,15 @@ export default function VentaForm() {
 
   // Opciones para el select de descripción
   const OPCIONES_CALIBRE = [
-    'SUPER','EXTRA','1RA','2DA','3RA','4TA','4TA ROÑA','CLASE B','PROCESO','DESECHO',
+    'SUPER', 'EXTRA', '1RA', '2DA', '3RA', '4TA', '4TA ROÑA', 'CLASE B', 'PROCESO', 'DESECHO',
   ];
 
+  // Muestra dd/mm/yyyy SIN tocar zonas horarias
   const fmtFecha = (v) => {
     if (!v) return '';
-    const d = new Date(v);
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const yyyy = d.getFullYear();
+    const s = String(v).slice(0, 10);   // 'YYYY-MM-DD'
+    const [yyyy, mm, dd] = s.split('-');
+    if (!yyyy || !mm || !dd) return '';
     return `${dd}/${mm}/${yyyy}`;
   };
 
@@ -107,10 +118,13 @@ export default function VentaForm() {
       return;
     }
 
+    // Asegura que el input date reciba exactamente 'YYYY-MM-DD'
+    const fechaYMD = String(seleccionada.fecha || '').slice(0, 10);
+
     setDatosCliente(prev => ({
       ...prev,
       nombre: seleccionada.cliente_nombre,
-      fecha: seleccionada.fecha,
+      fecha: fechaYMD, // fuerza 'YYYY-MM-DD' para el <input type="date">
     }));
 
     const { data: registros, error } = await supabase
@@ -213,7 +227,8 @@ export default function VentaForm() {
       nombre_cliente: datosCliente.nombre,
       productos: filasValidas,
       total: filasValidas.reduce((sum, p) => sum + p.importe, 0),
-      anticipo: parseFloat(anticipo) || 0,
+      anticipo: anticipo === '' ? 0 : (parseFloat(anticipo) || 0),
+      
     };
 
     const payloadConUUID = {
@@ -247,7 +262,7 @@ export default function VentaForm() {
       await refetchVentas();
 
       setMensaje(`✅ Compra guardada correctamente con nota #${numeroNota}`);
-      setAnticipo(0);
+      setAnticipo('');
       setProductosPorTipo({});
       setClasificacionSeleccionada('');
     }
@@ -279,7 +294,10 @@ export default function VentaForm() {
 
       <h3 style={{ textAlign: 'center', color: '#2e7d32' }}>Registro de Compra</h3>
 
-      <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+      {/* BOTONES SUPERIORES */}
+      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginBottom: '1rem', flexWrap:'wrap' }}>
+        <button onClick={() => navigate('/recepcion')} style={botonRecepcion}>📥 Recepción</button>
+        <button onClick={() => navigate('/clasificacion-entrega')} style={botonClasificacion}>📦 Clasificación</button>
         <button onClick={() => navigate('/secretaria')} style={botonSecretaria}>📁 Secretaría</button>
         <button onClick={handleLogout} style={botonCerrarSesion}>🔒 Cerrar sesión</button>
       </div>
@@ -335,7 +353,7 @@ export default function VentaForm() {
             step="0.01"
             min="0"
             value={anticipo}
-            onChange={(e) => setAnticipo(parseFloat(e.target.value) || 0)}
+            onChange={(e) => setAnticipo(e.target.value)}
             style={inputEstilo}
             placeholder="Ingrese monto del anticipo (opcional)"
           />
@@ -446,6 +464,24 @@ const botonPrincipal = {
   borderRadius: '8px',
   fontSize: '1rem',
   marginTop: '1.5rem',
+};
+
+/* === Botones de navegación === */
+const botonRecepcion = {
+  padding: '0.5rem 1rem',
+  backgroundColor: '#1565c0',
+  color: '#fff',
+  border: 'none',
+  borderRadius: '6px',
+  cursor: 'pointer',
+};
+const botonClasificacion = {
+  padding: '0.5rem 1rem',
+  backgroundColor: '#6a1b9a',
+  color: '#fff',
+  border: 'none',
+  borderRadius: '6px',
+  cursor: 'pointer',
 };
 
 const botonSecretaria = {

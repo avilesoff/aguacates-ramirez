@@ -22,27 +22,9 @@ function Login() {
       return;
     }
 
-    const userId = sessionData.user?.id;
-    if (userId) {
-      const { data: perfil, error: errorPerfil } = await supabase
-        .from('profiles')
-        .select('rol')
-        .eq('id', userId)
-        .single();
-
-      if (errorPerfil || !perfil) {
-        setMensaje('❌ No se pudo obtener el perfil del usuario.');
-        return;
-      }
-
-      const rol = perfil.rol;
-      if (rol === 'recepcion') {
-        navigate('/recepcion', { replace: true });
-      } else if (rol === 'clasificacion') {
-        navigate('/clasificacion-entrega', { replace: true });
-      } else {
-        setMensaje('❌ Rol desconocido.');
-      }
+    if (sessionData?.user?.id) {
+      // Unificación: todos van a Secretaría
+      navigate('/secretaria', { replace: true });
     } else {
       setMensaje('❌ No se pudo obtener el ID del usuario.');
     }

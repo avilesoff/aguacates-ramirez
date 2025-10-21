@@ -13,10 +13,39 @@ export default function ClasificacionEntrega() {
   const [toast, setToast] = useState({ text: '', color: '' });
   const [clasificados, setClasificados] = useState(new Set());
 
-  const calibres = [
+  // 1) Claves estables para no romper el estado/cálculos
+  const calibreKeys = [
     'EXTRA', '1RA', '2DA', '3RA', '4TA',
-    'CLASE B', 'PROCESO', 'DESECHO', '4TA ROÑA'
+    'CLASE_B', 'PROCESO', 'DESECHO', '4TA_ROÑA',
+    'OTRO_1', 'OTRO_2', 'OTRO_3'
   ];
+
+  // 2) Nombres por defecto (lo que se muestra)
+  const defaultCalibreNames = {
+    EXTRA: 'EXTRA',
+    '1RA': '1RA',
+    '2DA': '2DA',
+    '3RA': '3RA',
+    '4TA': '4TA',
+    CLASE_B: 'CLASE B',
+    PROCESO: 'PROCESO',
+    DESECHO: 'DESECHO',
+    '4TA_ROÑA': '4TA ROÑA',
+    OTRO_1: 'OTRO 1',
+    OTRO_2: 'OTRO 2',
+    OTRO_3: 'OTRO 3',
+  };
+
+  // 3) Nombres personalizables solo para OTROs
+  const [customNames, setCustomNames] = useState({
+    OTRO_1: '',
+    OTRO_2: '',
+    OTRO_3: '',
+  });
+
+  // Aux: obtener el nombre que se debe mostrar/guardar
+  const labelFor = (key) =>
+    (key.startsWith('OTRO_') ? (customNames[key] || defaultCalibreNames[key]) : defaultCalibreNames[key]);
 
   // 🔒 Proteger ruta
   useEffect(() => {
@@ -97,19 +126,46 @@ export default function ClasificacionEntrega() {
       .eq('entrega_id', entregaId);
 
     if (!errDetalle && Array.isArray(detalle)) {
-      setDetalleRecepcion(detalle);
+      // 👉 AGRUPA POR EL TIPO EXACTO (SIN NORMALIZAR)
+      const mapTipo = new Map();
+      for (const r of detalle) {
+        const t = String(r.tipo || '').trim(); // usar tal cual
+        const kg = parseFloat(r.kilos || 0);
+        mapTipo.set(t, (mapTipo.get(t) || 0) + kg);
+      }
+
+      // Orden preferente incluyendo variantes conocidas; lo que no esté aquí queda alfabético al final
+      const ordenPreferente = [
+        'Loca', 'Loca Tamaño', 'Loca Proceso',
+        'Negro', 'Negro Tamaño', 'Negro Proceso',
+        'Aventajado', 'Aventajado Tamaño', 'Aventajado Proceso',
+        'Desecho'
+      ];
+
+      const lista = Array.from(mapTipo.entries())
+        .sort((a, b) => {
+          const ia = ordenPreferente.indexOf(a[0]);
+          const ib = ordenPreferente.indexOf(b[0]);
+          if (ia === -1 && ib === -1) return a[0].localeCompare(b[0]);
+          if (ia === -1) return 1;
+          if (ib === -1) return -1;
+          return ia - ib;
+        })
+        .map(([tipo, kilos]) => ({ tipo, kilos }));
+
+      setDetalleRecepcion(lista);
     }
   };
 
   // ✏️ Actualizar inputs
-  const handleInputChange = (tipo, calibre, campo, valor) => {
+  const handleInputChange = (tipo, calibreKey, campo, valor) => {
     setClasificaciones(prev => {
       const porTipo = prev[tipo] || {};
       return {
         ...prev,
         [tipo]: {
           ...porTipo,
-          [calibre]: { ...porTipo[calibre], [campo]: valor }
+          [calibreKey]: { ...porTipo[calibreKey], [campo]: valor }
         }
       };
     });
@@ -141,19 +197,20 @@ export default function ClasificacionEntrega() {
       return;
     }
 
-    const fechaSolo = new Date(entregaSeleccionada.fecha_hora).toISOString().split('T')[0];
+    // 👉 Fechas sin desfase: solo YYYY-MM-DD (sin toISOString/UTC)
+    const fechaSolo = String(entregaSeleccionada.fecha_hora || '').slice(0, 10);
 
     const registros = [];
     for (const tipo in clasificaciones) {
-      for (const calibre in clasificaciones[tipo]) {
-        const datos = clasificaciones[tipo][calibre];
+      for (const calibreKey in clasificaciones[tipo]) {
+        const datos = clasificaciones[tipo][calibreKey];
         if ((datos.cajas || datos.kg) && (datos.cajas > 0 || datos.kg > 0)) {
           registros.push({
             entrega_id: entregaSeleccionada.entrega_id,
             cliente_nombre: entregaSeleccionada.cliente_nombre,
             fecha: fechaSolo,
             tipo,
-            calibre,
+            calibre: labelFor(calibreKey),     // 👈 nombre elegido/mostrado (OTROs editables)
             cajas: parseInt(datos.cajas || 0),
             kg: parseFloat(datos.kg || 0)
           });
@@ -167,11 +224,10 @@ export default function ClasificacionEntrega() {
       return;
     }
 
-    // 🧮 Nueva validación: debe clasificar exactamente la misma cantidad
+    // 🧮 Debe clasificar exactamente la misma cantidad
     const totalClasificadoKg = totalGeneral();
     const diferencia = Math.abs(totalClasificadoKg - totalKilosRecepcion);
 
-    // Más kilos que los recibidos
     if (totalClasificadoKg > totalKilosRecepcion) {
       setToast({
         text: `❌ No puedes clasificar más de ${totalKilosRecepcion} kg.`,
@@ -181,7 +237,6 @@ export default function ClasificacionEntrega() {
       return;
     }
 
-    // Menos kilos que los recibidos
     if (totalClasificadoKg < totalKilosRecepcion) {
       setToast({
         text: `⚠️ Has clasificado ${diferencia.toLocaleString()} kg menos de los recibidos (${totalClasificadoKg.toLocaleString()} / ${totalKilosRecepcion.toLocaleString()} kg). Debes clasificar la cantidad exacta.`,
@@ -201,10 +256,7 @@ export default function ClasificacionEntrega() {
         color: 'green'
       });
 
-      // Quitar la entrega del menú local
       setEntregas((prev) => prev.filter(e => e.entrega_id !== entregaSeleccionada.entrega_id));
-
-      // Limpiar campos
       setEntregaSeleccionada(null);
       setDetalleRecepcion([]);
       setClasificaciones({});
@@ -217,6 +269,8 @@ export default function ClasificacionEntrega() {
     await supabase.auth.signOut();
     navigate('/login');
   };
+
+  const irAVentas = () => navigate('/ventas');
 
   // 🎨 Estilos
   const thEstilo = { padding: '0.6rem', textAlign: 'left', fontWeight: 'bold' };
@@ -238,6 +292,23 @@ export default function ClasificacionEntrega() {
       100% { opacity: 0; transform: translateX(100%); }
     }
   `;
+
+  const btnVolver = {
+    padding: '0.45rem 0.9rem',
+    background: '#2e7d32',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 6,
+    cursor: 'pointer'
+  };
+  const btnCerrar = {
+    padding: '0.45rem 0.9rem',
+    background: '#b71c1c',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 6,
+    cursor: 'pointer'
+  };
 
   return (
     <div style={{
@@ -284,6 +355,12 @@ export default function ClasificacionEntrega() {
           <h2 style={{ color: '#2e7d32' }}>Clasificación por tipo de aguacate</h2>
         </div>
 
+        {/* Barra de acciones */}
+        <div style={{ display:'flex', gap:8, justifyContent:'flex-end', margin:'-8px 0 12px 0', flexWrap:'wrap' }}>
+          <button onClick={irAVentas} style={btnVolver}>← Registrar compra</button>
+          <button onClick={cerrarSesion} style={btnCerrar}>🔒 Cerrar sesión</button>
+        </div>
+
         {entregas.length === 0 ? (
           <p style={{ textAlign: 'center', color: '#666', fontStyle: 'italic' }}>
             ✅ No hay entregas pendientes por clasificar.
@@ -298,7 +375,9 @@ export default function ClasificacionEntrega() {
             >
               <option value="">Selecciona una entrega</option>
               {entregas.map(r => {
-                const fechaStr = new Date(r.fecha_hora).toLocaleDateString();
+                const ymd = String(r.fecha_hora || '').slice(0, 10);
+                const [yyyy, mm, dd] = ymd.split('-');
+                const fechaStr = `${dd}/${mm}/${yyyy}`;
                 return (
                   <option key={r.entrega_id} value={r.entrega_id}>
                     {r.cliente_nombre} – {fechaStr} – {r.total_kilos.toLocaleString()} KG
@@ -326,35 +405,50 @@ export default function ClasificacionEntrega() {
                         </tr>
                       </thead>
                       <tbody>
-                        {calibres.map((calibre, index) => (
-                          <tr key={index} style={{ backgroundColor: index % 2 === 0 ? '#f9f9f9' : '#fff' }}>
-                            <td style={tdEstilo}>{index + 1}</td>
-                            <td style={tdEstilo}>{calibre}</td>
-                            <td style={tdEstilo}>
-                              <input
-                                type="number"
-                                min="0"
-                                value={clasificaciones[item.tipo]?.[calibre]?.cajas || ''}
-                                onChange={(e) =>
-                                  handleInputChange(item.tipo, calibre, 'cajas', e.target.value)
-                                }
-                                style={inputTabla}
-                              />
-                            </td>
-                            <td style={tdEstilo}>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={clasificaciones[item.tipo]?.[calibre]?.kg || ''}
-                                onChange={(e) =>
-                                  handleInputChange(item.tipo, calibre, 'kg', e.target.value)
-                                }
-                                style={inputTabla}
-                              />
-                            </td>
-                          </tr>
-                        ))}
+                        {calibreKeys.map((key, index) => {
+                          const isOtro = key.startsWith('OTRO_');
+                          const label = labelFor(key);
+
+                          return (
+                            <tr key={key} style={{ backgroundColor: index % 2 === 0 ? '#f9f9f9' : '#fff' }}>
+                              <td style={tdEstilo}>{index + 1}</td>
+                              <td style={tdEstilo}>
+                                {isOtro ? (
+                                  <input
+                                    type="text"
+                                    value={customNames[key]}
+                                    placeholder={defaultCalibreNames[key]}
+                                    onChange={(e) =>
+                                      setCustomNames((prev) => ({ ...prev, [key]: e.target.value.toUpperCase() }))
+                                    }
+                                    style={{ width: '100%', maxWidth: 180, padding: '0.35rem', border: '1px solid #ccc', borderRadius: 6 }}
+                                  />
+                                ) : (
+                                  label
+                                )}
+                              </td>
+                              <td style={tdEstilo}>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={clasificaciones[item.tipo]?.[key]?.cajas || ''}
+                                  onChange={(e) => handleInputChange(item.tipo, key, 'cajas', e.target.value)}
+                                  style={inputTabla}
+                                />
+                              </td>
+                              <td style={tdEstilo}>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={clasificaciones[item.tipo]?.[key]?.kg || ''}
+                                  onChange={(e) => handleInputChange(item.tipo, key, 'kg', e.target.value)}
+                                  style={inputTabla}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                     <p style={{
@@ -395,21 +489,6 @@ export default function ClasificacionEntrega() {
             </button>
           </form>
         )}
-
-        <div style={{ marginTop: '2rem', textAlign: 'center' }}>
-          <button
-            onClick={cerrarSesion}
-            style={{
-              backgroundColor: '#aaa',
-              padding: '0.5rem 1rem',
-              borderRadius: '6px',
-              border: 'none',
-              cursor: 'pointer'
-            }}
-          >
-            Cerrar sesión
-          </button>
-        </div>
       </div>
     </div>
   );

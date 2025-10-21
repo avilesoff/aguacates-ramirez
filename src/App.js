@@ -1,3 +1,4 @@
+// src/App.js
 import React, { useEffect, useState } from 'react';
 import {
   BrowserRouter,
@@ -14,7 +15,7 @@ import Recepcion from './Recepcion';
 import ClasificacionEntrega from './ClasificacionEntrega';
 import VentaForm from './VentaForm';
 import VentasAdmin from './VentasAdmin';
-import SecretariaAdmin from './SecretariaAdmin'; // <-- NUEVO
+import SecretariaAdmin from './SecretariaAdmin';
 import { supabase } from './supabaseClient';
 
 function AppWrapper() {
@@ -44,10 +45,7 @@ function App() {
           .select('rol')
           .eq('id', usuario.id)
           .single();
-
-        if (!error && perfil) {
-          setRol(perfil.rol);
-        }
+        if (!error && perfil) setRol(perfil.rol);
       }
 
       setCargando(false);
@@ -64,9 +62,7 @@ function App() {
           .eq('id', session.user.id)
           .single()
           .then(({ data, error }) => {
-            if (!error && data) {
-              setRol(data.rol);
-            }
+            if (!error && data) setRol(data.rol);
             setCargando(false);
           });
       } else {
@@ -80,6 +76,7 @@ function App() {
     return () => listener?.subscription.unsubscribe();
   }, [navigate]);
 
+  // ⛳ Redirección automática por rol (no rebotar a secretaria cuando entra a recep/clasif)
   useEffect(() => {
     if (!cargando && user) {
       const currentPath = location.pathname;
@@ -90,7 +87,7 @@ function App() {
         navigate('/clasificacion-entrega', { replace: true });
       } else if (
         rol === 'secretaria' &&
-        !['/ventas', '/ventas-admin', '/secretaria'].includes(currentPath) // <-- PERMITE /secretaria
+        !['/ventas', '/ventas-admin', '/secretaria', '/recepcion', '/clasificacion-entrega'].includes(currentPath)
       ) {
         navigate('/ventas', { replace: true });
       }
@@ -102,17 +99,22 @@ function App() {
       {/* Barra superior */}
       <div style={{ padding: '1rem', background: '#eee' }}>
         <Link to="/login" style={{ marginRight: '1rem' }}>Inicio de Sesión</Link>
+
         {user && rol === 'recepcion' && (
           <Link to="/recepcion" style={{ marginRight: '1rem' }}>Recepción</Link>
         )}
+
         {user && rol === 'clasificacion' && (
-          <Link to="/clasificacion-entrega" style={{ marginRight: '1rem' }}>Clasificación (entrega)</Link>
+          <Link to="/clasificacion-entrega" style={{ marginRight: '1rem' }}>
+            Clasificación (entrega)
+          </Link>
         )}
+
         {user && rol === 'secretaria' && (
           <>
             <Link to="/ventas" style={{ marginRight: '1rem' }}>Ventas</Link>
             <Link to="/ventas-admin" style={{ marginRight: '1rem' }}>Admin</Link>
-            <Link to="/secretaria">Secretaría</Link> {/* <-- NUEVO */}
+            <Link to="/secretaria">Secretaría</Link>
           </>
         )}
       </div>
@@ -120,10 +122,11 @@ function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
 
+        {/* 🔓 Permite recepcion A secretaria también */}
         <Route
           path="/recepcion"
           element={
-            cargando ? null : user && rol === 'recepcion' ? (
+            cargando ? null : user && (rol === 'recepcion' || rol === 'secretaria') ? (
               <Recepcion />
             ) : (
               <Navigate to="/login" replace state={{ from: location.pathname }} />
@@ -131,10 +134,11 @@ function App() {
           }
         />
 
+        {/* 🔓 Permite clasificacion-entrega A secretaria también */}
         <Route
           path="/clasificacion-entrega"
           element={
-            cargando ? null : user && rol === 'clasificacion' ? (
+            cargando ? null : user && (rol === 'clasificacion' || rol === 'secretaria') ? (
               <ClasificacionEntrega />
             ) : (
               <Navigate to="/login" replace state={{ from: location.pathname }} />
@@ -164,7 +168,6 @@ function App() {
           }
         />
 
-        {/* <-- NUEVA RUTA SECRETARÍA */}
         <Route
           path="/secretaria"
           element={
@@ -176,7 +179,8 @@ function App() {
           }
         />
 
-        <Route path="*" element={<h2 style={{ padding: '2rem' }}>Página no encontrada</h2>} />
+        {/* Default */}
+        <Route path="*" element={<Navigate to="/ventas" replace />} />
       </Routes>
     </div>
   );
