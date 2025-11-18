@@ -10,7 +10,7 @@ import * as serviceWorkerRegistration from './serviceWorkerRegistration';
 
 // 👇 Nuevo: watcher de versión para forzar recarga cuando hay deploy
 // Asegúrate de que en src/checkVersion.js exportas startVersionWatcher
-import { startVersionWatcher } from './checkVersion';
+import { startVersionWatcher } from './checkVersion.js';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

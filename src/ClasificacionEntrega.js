@@ -56,57 +56,30 @@ export default function ClasificacionEntrega() {
     verificarSesion();
   }, [navigate]);
 
-  // 📦 Cargar entregas (solo no clasificadas)
-  useEffect(() => {
-    const cargarEntregas = async () => {
-      const { data, error } = await supabase
-        .from('recepciones')
-        .select('entrega_id, cliente_nombre, fecha_hora, kilos')
-        .not('entrega_id', 'is', null)
-        .order('fecha_hora', { ascending: false })
-        .limit(500);
+useEffect(() => {
+  const cargarEntregas = async () => {
+    // Trae directamente las pendientes desde la vista
+    const { data, error } = await supabase
+      .from('v_entregas_pendientes')
+      .select('entrega_id, cliente_nombre, fecha_hora, total_kilos')
+      .order('fecha_hora', { ascending: false });
 
-      if (error) {
-        console.error(error);
-        setEntregas([]);
-        return;
-      }
+    if (error) {
+      console.error(error);
+      setEntregas([]);
+      return;
+    }
 
-      const mapa = new Map();
-      for (const row of data) {
-        const key = row.entrega_id;
-        if (!key) continue;
-        const actual = mapa.get(key) || {
-          entrega_id: key,
-          cliente_nombre: row.cliente_nombre,
-          fecha_hora: row.fecha_hora,
-          total_kilos: 0
-        };
-        actual.total_kilos += parseFloat(row.kilos) || 0;
-        if (new Date(row.fecha_hora) > new Date(actual.fecha_hora)) {
-          actual.fecha_hora = row.fecha_hora;
-        }
-        mapa.set(key, actual);
-      }
+    // data ya viene agrupada, sumada y filtrada (solo pendientes)
+    // Estructura esperada: [{ entrega_id, cliente_nombre, fecha_hora, total_kilos }, ...]
+    setEntregas(data || []);
+  };
 
-      const { data: clasifData, error: errClasif } = await supabase
-        .from('clasificacion')
-        .select('entrega_id');
+  cargarEntregas();
+}, []);
 
-      let clasificadasSet = new Set();
-      if (!errClasif && clasifData) {
-        clasificadasSet = new Set(clasifData.map(r => r.entrega_id));
-        setClasificados(clasificadasSet);
-      }
 
-      const noClasificadas = Array.from(mapa.values()).filter(
-        e => !clasificadasSet.has(e.entrega_id)
-      );
 
-      setEntregas(noClasificadas);
-    };
-    cargarEntregas();
-  }, []);
 
   // 📋 Selección de entrega
   const handleEntregaChange = async (e) => {
@@ -121,40 +94,41 @@ export default function ClasificacionEntrega() {
     if (!entregaId) return;
 
     const { data: detalle, error: errDetalle } = await supabase
-      .from('recepciones')
-      .select('tipo, kilos')
-      .eq('entrega_id', entregaId);
+  .from('recepciones')
+  .select('tipo, kilos')
+  .eq('entrega_id', entregaId);
 
-    if (!errDetalle && Array.isArray(detalle)) {
-      // 👉 AGRUPA POR EL TIPO EXACTO (SIN NORMALIZAR)
-      const mapTipo = new Map();
-      for (const r of detalle) {
-        const t = String(r.tipo || '').trim(); // usar tal cual
-        const kg = parseFloat(r.kilos || 0);
-        mapTipo.set(t, (mapTipo.get(t) || 0) + kg);
-      }
+if (!errDetalle && Array.isArray(detalle)) {
+  // 👉 AGRUPA POR EL TIPO EXACTO (SIN NORMALIZAR)
+  const mapTipo = new Map();
+  for (const r of detalle) {
+    const t = String(r.tipo || '').trim(); // usar tal cual
+    const kg = parseFloat(r.kilos || 0);
+    mapTipo.set(t, (mapTipo.get(t) || 0) + kg);
+  }
 
-      // Orden preferente incluyendo variantes conocidas; lo que no esté aquí queda alfabético al final
-      const ordenPreferente = [
-        'Loca', 'Loca Tamaño', 'Loca Proceso',
-        'Negro', 'Negro Tamaño', 'Negro Proceso',
-        'Aventajado', 'Aventajado Tamaño', 'Aventajado Proceso',
-        'Desecho'
-      ];
+  // Orden preferente; lo demás queda alfabético al final
+  const ordenPreferente = [
+    'Loca', 'Loca Tamaño', 'Loca Proceso',
+    'Negro', 'Negro Tamaño', 'Negro Proceso',
+    'Aventajado', 'Aventajado Tamaño', 'Aventajado Proceso',
+    'Desecho'
+  ];
 
-      const lista = Array.from(mapTipo.entries())
-        .sort((a, b) => {
-          const ia = ordenPreferente.indexOf(a[0]);
-          const ib = ordenPreferente.indexOf(b[0]);
-          if (ia === -1 && ib === -1) return a[0].localeCompare(b[0]);
-          if (ia === -1) return 1;
-          if (ib === -1) return -1;
-          return ia - ib;
-        })
-        .map(([tipo, kilos]) => ({ tipo, kilos }));
+  const lista = Array.from(mapTipo.entries())
+    .sort((a, b) => {
+      const ia = ordenPreferente.indexOf(a[0]);
+      const ib = ordenPreferente.indexOf(b[0]);
+      if (ia === -1 && ib === -1) return a[0].localeCompare(b[0]);
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    })
+    .map(([tipo, kilos]) => ({ tipo, kilos }));
 
-      setDetalleRecepcion(lista);
-    }
+  setDetalleRecepcion(lista);
+}
+
   };
 
   // ✏️ Actualizar inputs

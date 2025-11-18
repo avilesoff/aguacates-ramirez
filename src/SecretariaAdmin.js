@@ -5,6 +5,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 
+
 export default function SecretariaAdmin() {
   const navigate = useNavigate();
 
@@ -61,188 +62,300 @@ export default function SecretariaAdmin() {
   }
 
   // ===== PDF (por tipo_origen + anticipo y saldo pendiente) =====
-  const descargarPDF = async (venta) => {
-    let productos;
-    try {
-      if (typeof venta.productos === 'string') {
-        productos = JSON.parse(venta.productos);
-      } else if (Array.isArray(venta.productos)) {
-        productos = venta.productos;
-      } else {
-        return alert(`❌ La venta #${venta.numero_nota} no tiene detalles para PDF.`);
-      }
-    } catch {
-      return alert(`❌ La venta #${venta.numero_nota} tiene formato incorrecto.`);
+  // ===== PDF (por tipo_origen + anticipo y saldo pendiente) =====
+// Carga imagen del /public y devuelve { dataUrl, format } para jsPDF.addImage
+async function loadImageForJsPDF(url) {
+  try {
+    const res = await fetch(url, { cache: 'no-store' }); // evita viejo cache
+    if (!res.ok) {
+      console.warn('No se pudo cargar imagen:', url, res.status);
+      return null;
+    }
+    const blob = await res.blob();
+
+    // Detecta formato para jsPDF
+    let format = 'PNG';
+    const mime = (blob.type || '').toLowerCase();
+    if (mime.includes('jpeg') || mime.includes('jpg')) format = 'JPEG';
+    else if (mime.includes('png')) format = 'PNG';
+    else {
+      // fallback: si no reconoce, intenta PNG
+      format = 'PNG';
     }
 
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    const margin = 14;
-
-    // Encabezado
-    const logoX = margin, logoY = 16, logoW = 24, logoH = 24, gap = 6;
-    const boxW = 56, boxH = 16;
-    const boxX = pageW - margin - boxW, boxY = 16;
-
-    const logoData = await loadImageAsDataURL('/aguacate.jpg');
-    if (logoData) doc.addImage(logoData, 'JPEG', logoX, logoY - 2, logoW, logoH);
-
-    const titleLeft = logoX + logoW + gap;
-    const titleRight = boxX - gap;
-    const titleCenterX = (titleLeft + titleRight) / 2;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
-    doc.text('Aguacates Ramírez', titleCenterX, 22, { align: 'center' });
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text('Registro SAGARPA: EMP0416058459/2021', titleCenterX, 28, { align: 'center' });
-    doc.text('Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro', titleCenterX, 34, { align: 'center' });
-
-    // Caja lateral
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('Nota de Compra', boxX, boxY - 2);
-    doc.setDrawColor(0);
-    doc.rect(boxX, boxY, boxW, boxH);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text('Folio:', boxX + 3, boxY + 6);
-    doc.setFont('helvetica', 'bold');
-    doc.text(fmtFolio(venta.numero_nota), boxX + 24, boxY + 6);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`Fecha: ${fmtFecha(venta.fecha)}`, boxX + 3, boxY + 12);
-
-    // Datos cliente
-    let y = Math.max(logoY + logoH + 12, boxY + boxH + 12);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.text('Datos del cliente', margin, y);
-    y += 10;
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text(`Cliente: ${venta.nombre_cliente}`, margin, y);
-    y += 10;
-
-    // Agrupar por tipo_origen
-    const grupos = {};
-    (productos || []).forEach((p) => {
-      const claveGrupo =
-        (p.tipo_origen && String(p.tipo_origen).trim()) ||
-        (p.tipo && String(p.tipo).trim()) ||
-        (p.descripcion && String(p.descripcion).trim()) ||
-        (p.calibre && String(p.calibre).trim()) ||
-        'Sin tipo';
-
-      if (!grupos[claveGrupo]) grupos[claveGrupo] = [];
-      grupos[claveGrupo].push(p);
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(blob);
     });
 
-    let totalGeneralKg = 0;
-    let totalGeneralImporte = 0;
+    return { dataUrl, format };
+  } catch (err) {
+    console.warn('loadImageForJsPDF error:', url, err);
+    return null;
+  }
+}
 
-    for (const tituloGrupo in grupos) {
-      const items = grupos[tituloGrupo];
+  const descargarPDF = async (venta) => {
+  let productos;
+  try {
+    if (typeof venta.productos === 'string') {
+      productos = JSON.parse(venta.productos);
+    } else if (Array.isArray(venta.productos)) {
+      productos = venta.productos;
+    } else {
+      return alert(`❌ La venta #${venta.numero_nota} no tiene detalles para PDF.`);
+    }
+  } catch {
+    return alert(`❌ La venta #${venta.numero_nota} tiene formato incorrecto.`);
+  }
 
-      let subtotalKg = 0;
-      let subtotalImporte = 0;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 14;
 
-      items.forEach((p) => {
+  // Encabezado
+  const logoX = margin, logoY = 16, logoW = 24, logoH = 24, gap = 6;
+  const boxW = 56, boxH = 16;
+  const boxX = pageW - margin - boxW, boxY = 16;
+
+  const logoData = await loadImageAsDataURL('/aguacate.jpg');
+  if (logoData) doc.addImage(logoData, 'JPEG', logoX, logoY - 2, logoW, logoH);
+
+  const titleLeft = logoX + logoW + gap;
+  const titleRight = boxX - gap;
+  const titleCenterX = (titleLeft + titleRight) / 2;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('Aguacates Ramírez', titleCenterX, 22, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text('Registro SAGARPA: EMP0416058459/2021', titleCenterX, 28, { align: 'center' });
+  doc.text('Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro', titleCenterX, 34, { align: 'center' });
+
+  // Caja lateral
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('Nota de Compra', boxX, boxY - 2);
+  doc.setDrawColor(0);
+  doc.rect(boxX, boxY, boxW, boxH);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text('Folio:', boxX + 3, boxY + 6);
+  doc.setFont('helvetica', 'bold');
+  doc.text(fmtFolio(venta.numero_nota), boxX + 24, boxY + 6);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Fecha: ${fmtFecha(venta.fecha)}`, boxX + 3, boxY + 12);
+
+  // Datos cliente
+  let y = Math.max(logoY + logoH + 12, boxY + boxH + 12);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('Datos del cliente', margin, y);
+  y += 10;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(`Cliente: ${venta.nombre_cliente}`, margin, y);
+  y += 10;
+
+// 🔝 RESUMEN ARRIBA (Kilos y Cajas) — tarjeta con iconos a la derecha
+let resumenKg = 0;
+let resumenCajas = 0;
+
+(productos || []).forEach((p) => {
+  resumenKg += Number(p.kg ?? p.cantidad ?? 0) || 0;
+  resumenCajas += Number(p.cajas ?? 0) || 0;
+});
+
+// Fallback: si no vienen cajas en productos, intenta traerlas desde 'clasificacion' por entrega_id/recepcion_id
+if ((resumenCajas || 0) === 0) {
+  try {
+    let entregaId = venta?.clasificacion_entrega_id ? String(venta.clasificacion_entrega_id) : null;
+
+    if (!entregaId && venta?.recepcion_id != null) {
+      const { data: rec } = await supabase
+        .from('recepciones')
+        .select('entrega_id')
+        .eq('id', venta.recepcion_id)
+        .single();
+      if (rec?.entrega_id) entregaId = String(rec.entrega_id);
+    }
+
+    if (entregaId) {
+      const { data: cls } = await supabase
+        .from('clasificacion')
+        .select('cajas')
+        .eq('entrega_id', entregaId);
+
+      if (Array.isArray(cls) && cls.length) {
+        const sumCajas = cls.reduce((acc, r) => acc + (Number(r.cajas) || 0), 0);
+        if (sumCajas > 0) resumenCajas = sumCajas;
+      }
+    }
+  } catch (e) {
+    console.warn('No se pudieron obtener cajas desde clasificacion:', e);
+  }
+}
+
+// --- Tarjeta (panel) a la derecha ---
+const panelW = 72;
+const panelH = 28;
+const panelX = pageW - margin - panelW;
+const panelY = y - 10;
+
+// Caja del panel
+doc.setDrawColor(46, 125, 50);
+doc.setLineWidth(0.4);
+doc.rect(panelX, panelY, panelW, panelH);
+
+// Títulos
+doc.setFont('helvetica', 'bold');
+doc.setFontSize(9);
+doc.text('Kilos', panelX + 20, panelY + 9);
+doc.text('Cajas', panelX + 20, panelY + 20);
+
+// Valores
+doc.setFont('helvetica', 'bold');
+doc.setFontSize(12);
+doc.text(resumenKg.toLocaleString(), panelX + 52, panelY + 9, { align: 'right' });
+doc.text(resumenCajas.toLocaleString(), panelX + 52, panelY + 20, { align: 'right' });
+
+// Iconos
+const boxIcon = await loadImageAsDataURL('/icons/box.jpg');
+const kgIcon  = await loadImageAsDataURL('/icons/kg.png');
+
+if (kgIcon)  doc.addImage(kgIcon,  'PNG', panelX + 5, panelY + 2,  12, 12);
+if (boxIcon) doc.addImage(boxIcon, 'JPG', panelX + 5, panelY + 13, 12, 12);
+
+// Deja algo de aire antes de las tablas
+y += 12;
+
+
+
+
+  // Agrupar por tipo_origen
+  const grupos = {};
+  (productos || []).forEach((p) => {
+    const claveGrupo =
+      (p.tipo_origen && String(p.tipo_origen).trim()) ||
+      (p.tipo && String(p.tipo).trim()) ||
+      (p.descripcion && String(p.descripcion).trim()) ||
+      (p.calibre && String(p.calibre).trim()) ||
+      'Sin tipo';
+
+    if (!grupos[claveGrupo]) grupos[claveGrupo] = [];
+    grupos[claveGrupo].push(p);
+  });
+
+  let totalGeneralKg = 0;
+  let totalGeneralImporte = 0;
+  let totalGeneralCajas = 0;
+
+  for (const tituloGrupo in grupos) {
+    const items = grupos[tituloGrupo];
+
+    let subtotalKg = 0;
+    let subtotalImporte = 0;
+    let subtotalCajas = 0;
+
+    items.forEach((p) => {
+      const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
+      const cajas = Number(p.cajas ?? 0) || 0;
+      const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
+      const importe = Number(p.importe ?? kg * precio) || 0;
+      subtotalKg += kg;
+      subtotalCajas += cajas;
+      subtotalImporte += importe;
+    });
+
+    totalGeneralKg += subtotalKg;
+    totalGeneralCajas += subtotalCajas;
+    totalGeneralImporte += subtotalImporte;
+
+    // Encabezado del grupo
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(46, 125, 50);
+    doc.text(`Tipo: ${tituloGrupo}`, margin, y + 5);
+    doc.setTextColor(0);
+    y += 10;
+
+    // Tabla del grupo
+    autoTable(doc, {
+      startY: y,
+      head: [['Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
+      body: items.map((p) => {
         const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
         const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
         const importe = Number(p.importe ?? kg * precio) || 0;
-        subtotalKg += kg;
-        subtotalImporte += importe;
-      });
+        const descripcion = String(p.descripcion ?? p.calibre ?? p.tipo ?? '-');
+        return [kg.toFixed(0), descripcion, money(precio), money(importe)];
+      }),
+      styles: { fontSize: 10, cellPadding: 2 },
+      headStyles: { fillColor: [46, 125, 50], textColor: 255 },
+      alternateRowStyles: { fillColor: [238, 245, 238] },
+      columnStyles: {
+        0: { halign: 'right', cellWidth: 32 },
+        1: { cellWidth: 'auto' },
+        2: { halign: 'right', cellWidth: 35 },
+        3: { halign: 'right', cellWidth: 35 },
+      },
+      theme: 'striped',
+      margin: { left: margin, right: margin },
+    });
 
-      totalGeneralKg += subtotalKg;
-      totalGeneralImporte += subtotalImporte;
-
-      // Encabezado del grupo
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(46, 125, 50);
-      doc.text(`Tipo: ${tituloGrupo}`, margin, y + 5);
-      doc.setTextColor(0);
-      y += 10;
-
-      // Tabla del grupo
-      autoTable(doc, {
-        startY: y,
-        head: [['Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
-        body: items.map((p) => {
-          const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
-          const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
-          const importe = Number(p.importe ?? kg * precio) || 0;
-          const descripcion = String(p.descripcion ?? p.calibre ?? p.tipo ?? '-');
-          return [kg.toFixed(0), descripcion, money(precio), money(importe)];
-        }),
-        styles: { fontSize: 10, cellPadding: 2 },
-        headStyles: { fillColor: [46, 125, 50], textColor: 255 },
-        alternateRowStyles: { fillColor: [238, 245, 238] },
-        columnStyles: {
-          0: { halign: 'right', cellWidth: 32 },
-          1: { cellWidth: 'auto' },
-          2: { halign: 'right', cellWidth: 35 },
-          3: { halign: 'right', cellWidth: 35 },
-        },
-        theme: 'striped',
-        margin: { left: margin, right: margin },
-      });
-
-      // Subtotal
-      y = doc.lastAutoTable.finalY + 6;
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.text(
-        `Subtotal ${tituloGrupo}: ${subtotalKg.toLocaleString()} kg — ${money(subtotalImporte)}`,
-        pageW - margin,
-        y,
-        { align: 'right' }
-      );
-      y += 10;
-    }
-
-    // Totales + anticipo/saldo
-    const anticipo = parseFloat(venta.anticipo || 0);
-    const saldo = totalGeneralImporte - anticipo;
-
+    // Subtotal (se mantiene como antes)
+    y = doc.lastAutoTable.finalY + 6;
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
+    doc.setFontSize(10);
     doc.text(
-      `Total General: ${totalGeneralKg.toLocaleString()} kg — ${money(totalGeneralImporte)}`,
+      `Subtotal ${tituloGrupo}: ${subtotalKg.toLocaleString()} kg — ${money(subtotalImporte)}`,
       pageW - margin,
-      y + 4,
+      y,
       { align: 'right' }
     );
+    y += 10;
+  }
 
-    if (anticipo > 0) {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(11);
-      doc.text(`Anticipo: ${money(anticipo)}`, pageW - margin, y + 10, { align: 'right' });
-      doc.setFont('helvetica', 'bold');
-      doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, y + 16, { align: 'right' });
-    }
+ // 🔚 Totales al final: **solo dinero** (kilos/cajas ya están arriba)
+const anticipo = parseFloat(venta.anticipo || 0);
+const saldo = totalGeneralImporte - anticipo;
 
-    // Footer
-    const pageCount = doc.getNumberOfPages();
-    const fechaHoy = fmtFecha(new Date());
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      doc.text(
-        `Documento generado automáticamente por el sistema EMPAQUE RAMÍREZ — ${fechaHoy}`,
-        margin,
-        pageH - 8
-      );
-      doc.text(`Página ${i} de ${pageCount}`, pageW - margin, pageH - 8, { align: 'right' });
-    }
+doc.setFont('helvetica', 'bold');
+doc.setFontSize(12);
+doc.text(`Total General: ${money(totalGeneralImporte)}`, pageW - margin, y + 4, { align: 'right' });
 
-    doc.save(`nota_compra_${fmtFolio(venta.numero_nota)}.pdf`);
-  };
+if (anticipo > 0) {
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.text(`Anticipo: ${money(anticipo)}`, pageW - margin, y + 10, { align: 'right' });
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, y + 16, { align: 'right' });
+}
+
+
+  // Footer
+  const pageCount = doc.getNumberOfPages();
+  const fechaHoy = fmtFecha(new Date());
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(
+      `Documento generado automáticamente por el sistema EMPAQUE RAMÍREZ — ${fechaHoy}`,
+      margin,
+      pageH - 8
+    );
+    doc.text(`Página ${i} de ${pageCount}`, pageW - margin, pageH - 8, { align: 'right' });
+  }
+
+  doc.save(`nota_compra_${fmtFolio(venta.numero_nota)}.pdf`);
+};
+
 
   // ===== Rango por DÍA =====
   // Utilidad para sumar días a un 'YYYY-MM-DD' SIN tocar timezones
