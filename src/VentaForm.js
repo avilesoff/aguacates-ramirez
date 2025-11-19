@@ -196,17 +196,28 @@ export default function VentaForm() {
     const recepcionIdParaInsert = esNumerico ? Number(recId) : null;
 
     const filasValidas = Object.entries(productosPorTipo).flatMap(([tipoOrigen, filas]) =>
-      filas
-        .filter(p => p.descripcion && parseFloat(p.cantidad) > 0 && parseFloat(p.precio) > 0)
-        .map(p => ({
-          tipo: p.descripcion,            // para PDF
-          tipo_origen: tipoOrigen,        // bloque origen
-          calibre: p.descripcion,
-          kg: parseFloat(p.cantidad),
-          precio_unitario: parseFloat(p.precio),
-          importe: parseFloat(p.cantidad) * parseFloat(p.precio),
-        }))
-    );
+  filas
+    .map(p => {
+      const cantidadNum = parseFloat(p.cantidad);
+      const precioNum   = parseFloat(p.precio);
+
+      const esCantidadValida = !Number.isNaN(cantidadNum) && cantidadNum > 0;
+      const esPrecioValido   = !Number.isNaN(precioNum) && precioNum >= 0; // permite 0
+
+      if (!p.descripcion || !esCantidadValida || !esPrecioValido) return null;
+
+      return {
+        tipo: p.descripcion,
+        tipo_origen: tipoOrigen,
+        calibre: p.descripcion,
+        kg: cantidadNum,
+        precio_unitario: precioNum,
+        importe: cantidadNum * precioNum,
+      };
+    })
+    .filter(Boolean)
+);
+
 
     if (filasValidas.length === 0) {
       setMensaje('❌ Debes ingresar al menos un producto con cantidad, descripción y precio.');
