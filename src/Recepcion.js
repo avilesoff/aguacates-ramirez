@@ -12,7 +12,7 @@ function App() {
   const [clienteNuevo, setClienteNuevo] = useState('');
   const [telefonoNuevo, setTelefonoNuevo] = useState('');
   const [clientesRegistrados, setClientesRegistrados] = useState([]);
-  const [lineas, setLineas] = useState([{ tipo: '', kilos: '' }]);
+  const [lineas, setLineas] = useState([{ tipo: '', kilos: '', cajas: '' }]);
   const [mensaje, setMensaje] = useState('');
   const [nombreEditado, setNombreEditado] = useState('');
 
@@ -73,7 +73,7 @@ function App() {
   };
 
   const agregarLinea = () => {
-    setLineas([...lineas, { tipo: '', kilos: '' }]);
+    setLineas([...lineas, { tipo: '', kilos: '', cajas: '' }]);
   };
 
   const eliminarLinea = (index) => {
@@ -213,6 +213,7 @@ function App() {
         cliente_nombre: nombreClienteFinal,
         tipo: linea.tipo,
         kilos: parseFloat(linea.kilos),
+        cajas: linea.cajas ? parseFloat(linea.cajas) : null,
         telefono_cliente: cliente === '__nuevo__' ? telefonoNuevo : null,
         fecha_hora: fechaHoraLocal,
       }));
@@ -232,7 +233,7 @@ function App() {
       setClienteNuevo('');
       setTelefonoNuevo('');
       setNombreEditado('');
-      setLineas([{ tipo: '', kilos: '' }]);
+      setLineas([{ tipo: '', kilos: '', cajas: '' }]);
       await cargarClientes(); // por si se creó un cliente nuevo
     }
   };
@@ -470,26 +471,60 @@ function App() {
                   ))}
                 </select>
 
-                <label>Kilos:</label>
-                <br />
-                <input
-                  type="number"
-                  step="0.01"
-                  value={linea.kilos}
-                  onChange={(e) =>
-                    handleLineaChange(index, 'kilos', e.target.value)
-                  }
-                  required
-                  style={{
-                    width: '50%',
-                    padding: '0.3rem 0.4rem',
-                    marginBottom: '0.4rem',
-                    borderRadius: '6px',
-                    border: '1px solid #ccc',
-                    fontSize: '0.9rem',
-                    height: '34px',
-                  }}
-                />
+               <div
+  style={{
+    display: 'flex',
+    gap: '1rem',
+    alignItems: 'flex-end',
+    marginBottom: '0.6rem',
+    flexWrap: 'wrap',
+  }}
+>
+  <div style={{ flex: 1, minWidth: '120px' }}>
+    <label>Cajas:</label>
+    <br />
+    <input
+      type="number"
+      min="0"
+      step="1"
+      value={linea.cajas}
+      onChange={(e) =>
+        handleLineaChange(index, 'cajas', e.target.value)
+      }
+      style={{
+        width: '100%',
+        padding: '0.3rem 0.4rem',
+        borderRadius: '6px',
+        border: '1px solid #ccc',
+        fontSize: '0.9rem',
+        height: '34px',
+      }}
+    />
+  </div>
+
+  <div style={{ flex: 1, minWidth: '120px' }}>
+    <label>Kilos:</label>
+    <br />
+    <input
+      type="number"
+      step="0.01"
+      value={linea.kilos}
+      onChange={(e) =>
+        handleLineaChange(index, 'kilos', e.target.value)
+      }
+      required
+      style={{
+        width: '100%',
+        padding: '0.3rem 0.4rem',
+        borderRadius: '6px',
+        border: '1px solid #ccc',
+        fontSize: '0.9rem',
+        height: '34px',
+      }}
+    />
+  </div>
+</div>
+
 
                 <p style={{ fontSize: '0.9rem', color: '#555' }}>
                   ≈ {toneladas.toFixed(2)} toneladas
