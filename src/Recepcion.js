@@ -14,39 +14,50 @@ function App() {
   const [clientesRegistrados, setClientesRegistrados] = useState([]);
   const [lineas, setLineas] = useState([{ tipo: '', kilos: '' }]);
   const [mensaje, setMensaje] = useState('');
+  const [nombreEditado, setNombreEditado] = useState('');
 
   const tiposDisponibles = [
-   'Loca',                 //  NUEVO
-  'Loca Tamaño',
-  'Loca Proceso',
-  'Negro',                //  NUEVO
-  'Negro Tamaño',
-  'Negro Proceso',
-  'Aventajado',           //  NUEVO
-  'Aventajado Tamaño',
-  'Aventajado Proceso',
-  'Desecho'
+    'Loca',
+    'Loca Tamaño',
+    'Loca Proceso',
+    'Negro',
+    'Negro Tamaño',
+    'Negro Proceso',
+    'Aventajado',
+    'Aventajado Tamaño',
+    'Aventajado Proceso',
+    'Desecho',
   ];
 
+  // Cargar usuario
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUsuario(user);
     });
   }, []);
 
-  useEffect(() => {
-    const cargarClientes = async () => {
-      const { data, error } = await supabase
-        .from('recepciones')
-        .select('cliente_nombre')
-        .neq('cliente_nombre', '')
-        .order('cliente_nombre', { ascending: true });
+  // Función para cargar clientes únicos
+  const cargarClientes = async () => {
+    const { data, error } = await supabase
+      .from('recepciones')
+      .select('cliente_nombre')
+      .neq('cliente_nombre', '')
+      .order('cliente_nombre', { ascending: true });
 
-      if (!error && data) {
-        const unicos = [...new Set(data.map(item => (item.cliente_nombre || '').trim()).filter(Boolean))];
-        setClientesRegistrados(unicos);
-      }
-    };
+    if (!error && data) {
+      const unicos = [
+        ...new Set(
+          data
+            .map((item) => (item.cliente_nombre || '').trim())
+            .filter(Boolean)
+        ),
+      ];
+      setClientesRegistrados(unicos);
+    }
+  };
+
+  // Cargar clientes al inicio
+  useEffect(() => {
     cargarClientes();
   }, []);
 
@@ -54,6 +65,7 @@ function App() {
     return <Login onLogin={(user) => setUsuario(user)} />;
   }
 
+  // Manejo de líneas de tipos de aguacate
   const handleLineaChange = (index, campo, valor) => {
     const nuevasLineas = [...lineas];
     nuevasLineas[index][campo] = valor;
@@ -70,26 +82,102 @@ function App() {
     setLineas(nuevasLineas);
   };
 
-  // >>> NUEVO: fecha local con offset (12:00) para evitar saltos de día
+  // Eliminar cliente seleccionado
+  const handleEliminarCliente = async () => {
+    if (!cliente || cliente === '__nuevo__') {
+      setMensaje('❌ Primero selecciona un cliente existente para eliminar.');
+      return;
+    }
+
+    const confirmar = window.confirm(
+      `¿Seguro que deseas eliminar al cliente "${cliente}" y todas sus recepciones registradas?`
+    );
+    if (!confirmar) return;
+
+    const { error } = await supabase
+      .from('recepciones')
+      .delete()
+      .eq('cliente_nombre', cliente);
+
+    if (error) {
+      setMensaje('❌ Error al eliminar cliente: ' + error.message);
+      return;
+    }
+
+    setMensaje('✅ Cliente eliminado correctamente.');
+    setCliente('');
+    setClienteNuevo('');
+    setTelefonoNuevo('');
+    setNombreEditado('');
+    await cargarClientes();
+  };
+
+  // Renombrar cliente
+  const handleRenombrarCliente = async () => {
+    if (!cliente || cliente === '__nuevo__') {
+      setMensaje('❌ Primero selecciona un cliente existente para renombrar.');
+      return;
+    }
+
+    const nuevoNombre = nombreEditado.trim();
+    if (!nuevoNombre) {
+      setMensaje('❌ El nuevo nombre no puede estar vacío.');
+      return;
+    }
+
+    if (nuevoNombre.toLowerCase() === cliente.toLowerCase()) {
+      setMensaje('⚠️ El nombre nuevo es igual al actual.');
+      return;
+    }
+
+    const yaExiste = clientesRegistrados.some(
+      (n) => n.toLowerCase() === nuevoNombre.toLowerCase()
+    );
+    if (yaExiste) {
+      setMensaje('❌ Ya existe otro cliente con ese nombre.');
+      return;
+    }
+
+    const confirmar = window.confirm(
+      `¿Seguro que deseas cambiar el nombre de "${cliente}" a "${nuevoNombre}"?`
+    );
+    if (!confirmar) return;
+
+    const { error } = await supabase
+      .from('recepciones')
+      .update({ cliente_nombre: nuevoNombre })
+      .eq('cliente_nombre', cliente);
+
+    if (error) {
+      setMensaje('❌ Error al renombrar cliente: ' + error.message);
+      return;
+    }
+
+    setMensaje('✅ Nombre de cliente actualizado correctamente.');
+    setCliente(nuevoNombre);
+    await cargarClientes();
+  };
+
+  // Fecha local a mediodía con offset (evita saltos de día por zona horaria)
   function localISOWithOffsetAtNoon(d = new Date()) {
     const yyyy = d.getFullYear();
     const MM = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
 
-    // offset en minutos respecto a UTC (negativo en América)
     const offsetMin = -d.getTimezoneOffset();
     const sign = offsetMin >= 0 ? '+' : '-';
     const oh = String(Math.floor(Math.abs(offsetMin) / 60)).padStart(2, '0');
     const om = String(Math.abs(offsetMin) % 60).padStart(2, '0');
 
-    // 12:00 local para evitar cruces de día
     return `${yyyy}-${MM}-${dd}T12:00:00${sign}${oh}:${om}`;
   }
 
+  // Guardar recepción
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const nombreClienteFinal = cliente === '__nuevo__' ? clienteNuevo.trim() : cliente;
+    const nombreClienteFinal =
+      cliente === '__nuevo__' ? clienteNuevo.trim() : cliente;
 
     if (!nombreClienteFinal) {
       setMensaje('❌ Debes escribir o seleccionar un nombre de cliente.');
@@ -111,13 +199,11 @@ function App() {
       }
     }
 
-    // Generar entrega_id (mismo para todas las filas de esta recepción)
     const entregaId =
-      (typeof crypto !== 'undefined' && crypto.randomUUID)
+      typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-    // >>> NUEVO: calcular una sola vez la "fecha_hora" local con offset (a mediodía)
     const fechaHoraLocal = localISOWithOffsetAtNoon();
 
     const registros = lineas
@@ -128,8 +214,7 @@ function App() {
         tipo: linea.tipo,
         kilos: parseFloat(linea.kilos),
         telefono_cliente: cliente === '__nuevo__' ? telefonoNuevo : null,
-        // >>> NUEVO: enviar fecha_hora explícita
-        fecha_hora: fechaHoraLocal
+        fecha_hora: fechaHoraLocal,
       }));
 
     if (registros.length === 0) {
@@ -146,31 +231,40 @@ function App() {
       setCliente('');
       setClienteNuevo('');
       setTelefonoNuevo('');
+      setNombreEditado('');
       setLineas([{ tipo: '', kilos: '' }]);
+      await cargarClientes(); // por si se creó un cliente nuevo
     }
   };
 
-  const totalKilos = lineas.reduce((sum, linea) => sum + parseFloat(linea.kilos || 0), 0);
+  const totalKilos = lineas.reduce(
+    (sum, linea) => sum + parseFloat(linea.kilos || 0),
+    0
+  );
   const totalToneladas = (totalKilos / 1000).toFixed(2);
 
   return (
-    <div style={{
-      backgroundColor: '#f5f5f5',
-      minHeight: '100vh',
-      paddingTop: '2rem',
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'flex-start',
-      fontFamily: 'Arial, sans-serif',
-    }}>
-      <div style={{
-        backgroundColor: '#fff',
-        padding: '2rem',
-        borderRadius: '10px',
-        boxShadow: '0 0 10px rgba(0,0,0,0.1)',
-        maxWidth: '600px',
-        width: '100%'
-      }}>
+    <div
+      style={{
+        backgroundColor: '#f5f5f5',
+        minHeight: '100vh',
+        paddingTop: '2rem',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'flex-start',
+        fontFamily: 'Arial, sans-serif',
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: '#fff',
+          padding: '2rem',
+          borderRadius: '10px',
+          boxShadow: '0 0 10px rgba(0,0,0,0.1)',
+          maxWidth: '600px',
+          width: '100%',
+        }}
+      >
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
           <img
             src="/aguacate.jpg"
@@ -180,8 +274,16 @@ function App() {
           <h2 style={{ color: '#2e7d32' }}>Recepción de Aguacate</h2>
         </div>
 
-        {/* BOTONES SUPERIORES */}
-        <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginBottom:'1rem', flexWrap:'wrap' }}>
+        {/* botones superiores */}
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            justifyContent: 'flex-end',
+            marginBottom: '1rem',
+            flexWrap: 'wrap',
+          }}
+        >
           <button
             type="button"
             onClick={() => navigate('/ventas')}
@@ -204,22 +306,109 @@ function App() {
         </div>
 
         <form onSubmit={handleSubmit}>
-          <label>Nombre del cliente:</label><br />
+          <label>Nombre del cliente:</label>
+          <br />
           <Select
             options={[
-              ...clientesRegistrados.map(nombre => ({ label: nombre, value: nombre })),
-              { label: '➕ Nuevo cliente', value: '__nuevo__' }
+              ...clientesRegistrados.map((nombre) => ({
+                label: nombre,
+                value: nombre,
+              })),
+              { label: '➕ Nuevo cliente', value: '__nuevo__' },
             ]}
             value={
               cliente
-                ? { label: cliente === '__nuevo__' ? '➕ Nuevo cliente' : cliente, value: cliente }
+                ? {
+                    label:
+                      cliente === '__nuevo__' ? '➕ Nuevo cliente' : cliente,
+                    value: cliente,
+                  }
                 : null
             }
-            onChange={(opt) => setCliente(opt ? opt.value : '')}
+            onChange={(opt) => {
+              const value = opt ? opt.value : '';
+              setCliente(value);
+              if (value && value !== '__nuevo__') {
+                setNombreEditado(value);
+              } else {
+                setNombreEditado('');
+              }
+            }}
             placeholder="Selecciona un cliente"
             isSearchable
           />
 
+          {/* botones para eliminar / renombrar cliente */}
+          <div
+            style={{
+              marginTop: '0.5rem',
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <button
+              type="button"
+              onClick={handleEliminarCliente}
+              disabled={!cliente || cliente === '__nuevo__'}
+              style={{
+                padding: '0.35rem 0.7rem',
+                borderRadius: 6,
+                border: 'none',
+                fontSize: '0.8rem',
+                cursor:
+                  !cliente || cliente === '__nuevo__'
+                    ? 'not-allowed'
+                    : 'pointer',
+                backgroundColor:
+                  !cliente || cliente === '__nuevo__' ? '#ccc' : '#e53935',
+                color: '#fff',
+              }}
+            >
+              🗑 Eliminar cliente
+            </button>
+            <span style={{ fontSize: '0.8rem', color: '#555' }}>
+              Borra al cliente y sus recepciones.
+            </span>
+          </div>
+
+          {cliente && cliente !== '__nuevo__' && (
+            <div
+              style={{
+                marginTop: '0.5rem',
+                display: 'flex',
+                gap: 8,
+                alignItems: 'center',
+                flexWrap: 'wrap',
+              }}
+            >
+              <input
+                type="text"
+                value={nombreEditado}
+                onChange={(e) => setNombreEditado(e.target.value)}
+                style={{ ...inputEstilo, width: '60%' }}
+                placeholder="Nuevo nombre del cliente"
+              />
+              <button
+                type="button"
+                onClick={handleRenombrarCliente}
+                style={{
+                  padding: '0.35rem 0.7rem',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.8rem',
+                  cursor: 'pointer',
+                  backgroundColor: '#1976d2',
+                  color: '#fff',
+                }}
+              >
+                ✏️ Renombrar cliente
+              </button>
+            </div>
+          )}
+
+          {/* campos para nuevo cliente */}
           {cliente === '__nuevo__' && (
             <>
               <input
@@ -245,39 +434,51 @@ function App() {
             </>
           )}
 
+          {/* líneas de tipos */}
           {lineas.map((linea, index) => {
             const kilos = parseFloat(linea.kilos || 0);
             const toneladas = kilos / 1000;
 
             return (
-              <div key={index} style={{
-                marginTop: '1.5rem',
-                padding: '1rem',
-                backgroundColor: '#f9f9f9',
-                borderRadius: '8px',
-                border: '1px solid #ddd'
-              }}>
+              <div
+                key={index}
+                style={{
+                  marginTop: '1.5rem',
+                  padding: '1rem',
+                  backgroundColor: '#f9f9f9',
+                  borderRadius: '8px',
+                  border: '1px solid #ddd',
+                }}
+              >
                 <h4>Tipo #{index + 1}</h4>
 
-                <label>Tipo de aguacate:</label><br />
+                <label>Tipo de aguacate:</label>
+                <br />
                 <select
                   value={linea.tipo}
-                  onChange={(e) => handleLineaChange(index, 'tipo', e.target.value)}
+                  onChange={(e) =>
+                    handleLineaChange(index, 'tipo', e.target.value)
+                  }
                   required
                   style={{ ...inputEstilo, marginBottom: '1rem' }}
                 >
                   <option value="">Selecciona tipo</option>
                   {tiposDisponibles.map((tipo) => (
-                    <option key={tipo} value={tipo}>{tipo}</option>
+                    <option key={tipo} value={tipo}>
+                      {tipo}
+                    </option>
                   ))}
                 </select>
 
-                <label>Kilos:</label><br />
+                <label>Kilos:</label>
+                <br />
                 <input
                   type="number"
                   step="0.01"
                   value={linea.kilos}
-                  onChange={(e) => handleLineaChange(index, 'kilos', e.target.value)}
+                  onChange={(e) =>
+                    handleLineaChange(index, 'kilos', e.target.value)
+                  }
                   required
                   style={{
                     width: '50%',
@@ -286,7 +487,7 @@ function App() {
                     borderRadius: '6px',
                     border: '1px solid #ccc',
                     fontSize: '0.9rem',
-                    height: '34px'
+                    height: '34px',
                   }}
                 />
 
@@ -305,7 +506,7 @@ function App() {
                         padding: '0.5rem',
                         borderRadius: '6px',
                         cursor: 'pointer',
-                        display: 'block'
+                        display: 'block',
                       }}
                     >
                       Eliminar esta línea
@@ -316,8 +517,15 @@ function App() {
             );
           })}
 
-          <p style={{ marginTop: '1rem', fontWeight: 'bold', textAlign: 'right' }}>
-            Total: {totalKilos.toLocaleString()} kg ≈ {totalToneladas} toneladas
+          <p
+            style={{
+              marginTop: '1rem',
+              fontWeight: 'bold',
+              textAlign: 'right',
+            }}
+          >
+            Total: {totalKilos.toLocaleString()} kg ≈ {totalToneladas}{' '}
+            toneladas
           </p>
 
           <button type="button" onClick={agregarLinea} style={botonSecundario}>
@@ -330,11 +538,13 @@ function App() {
         </form>
 
         {mensaje && (
-          <p style={{
-            marginTop: '1rem',
-            textAlign: 'center',
-            color: mensaje.includes('❌') ? 'red' : 'green'
-          }}>
+          <p
+            style={{
+              marginTop: '1rem',
+              textAlign: 'center',
+              color: mensaje.includes('❌') ? 'red' : 'green',
+            }}
+          >
             {mensaje}
           </p>
         )}
@@ -348,7 +558,7 @@ const inputEstilo = {
   padding: '0.5rem',
   marginTop: '0.5rem',
   borderRadius: '6px',
-  border: '1px solid #ccc'
+  border: '1px solid #ccc',
 };
 
 const botonPrincipal = {
@@ -360,7 +570,7 @@ const botonPrincipal = {
   border: 'none',
   borderRadius: '8px',
   cursor: 'pointer',
-  fontSize: '1rem'
+  fontSize: '1rem',
 };
 
 const botonSecundario = {
@@ -372,7 +582,7 @@ const botonSecundario = {
   border: 'none',
   borderRadius: '8px',
   cursor: 'pointer',
-  fontSize: '1rem'
+  fontSize: '1rem',
 };
 
 const btnVolver = {
@@ -381,7 +591,7 @@ const btnVolver = {
   color: '#fff',
   border: 'none',
   borderRadius: 6,
-  cursor: 'pointer'
+  cursor: 'pointer',
 };
 
 const btnCerrar = {
@@ -390,7 +600,7 @@ const btnCerrar = {
   color: '#fff',
   border: 'none',
   borderRadius: 6,
-  cursor: 'pointer'
+  cursor: 'pointer',
 };
 
 export default App;
