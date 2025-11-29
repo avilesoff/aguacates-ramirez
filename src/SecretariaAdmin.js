@@ -97,7 +97,7 @@ async function loadImageForJsPDF(url) {
   }
 }
 
-  const descargarPDF = async (venta) => {
+ const descargarPDF = async (venta) => {
   let productos;
   try {
     if (typeof venta.productos === 'string') {
@@ -110,6 +110,115 @@ async function loadImageForJsPDF(url) {
   } catch {
     return alert(`❌ La venta #${venta.numero_nota} tiene formato incorrecto.`);
   }
+
+  // === Totales CLASIFICADOS (lo que se vende) ===
+  let kilosClasificados = 0;
+  let cajasClasificadas = 0;
+  const cajasPorTipo = {}; // mapa por tipo para usar en subtotales
+
+  const getTipoKeyFromProducto = (p) =>
+    (p.tipo_origen && String(p.tipo_origen).trim()) ||
+    (p.tipo && String(p.tipo).trim()) ||
+    (p.descripcion && String(p.descripcion).trim()) ||
+    (p.calibre && String(p.calibre).trim()) ||
+    'Sin tipo';
+
+  (productos || []).forEach((p) => {
+    const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
+    const cajas = Number(p.cajas ?? 0) || 0;
+
+    kilosClasificados += kg;
+    cajasClasificadas += cajas;
+
+    const key = getTipoKeyFromProducto(p);
+    cajasPorTipo[key] = (cajasPorTipo[key] || 0) + cajas;
+  });
+
+  // === Totales RECIBIDOS (desde recepciones) ===
+  let kilosRecibidos = null;
+  let cajasRecibidas = null;
+
+  // Buscar entrega_id vinculado
+  let entregaId = venta?.clasificacion_entrega_id
+    ? String(venta.clasificacion_entrega_id)
+    : null;
+
+  // Si no viene en ventas, lo buscamos por recepcion_id
+  if (!entregaId && venta?.recepcion_id != null) {
+    try {
+      const { data: recRow } = await supabase
+        .from('recepciones')
+        .select('entrega_id')
+        .eq('id', venta.recepcion_id)
+        .maybeSingle();
+
+      if (recRow?.entrega_id) entregaId = String(recRow.entrega_id);
+    } catch (e) {
+      console.warn('Error obteniendo entrega_id desde recepcion:', e);
+    }
+  }
+
+  // Si tenemos entrega_id, sumamos desde recepciones
+  if (entregaId) {
+    try {
+      const { data: recs } = await supabase
+        .from('recepciones')
+        .select('kilos, cajas')
+        .eq('entrega_id', entregaId);
+
+      if (Array.isArray(recs) && recs.length) {
+        kilosRecibidos = recs.reduce(
+          (acc, r) => acc + (Number(r.kilos) || 0),
+          0
+        );
+        cajasRecibidas = recs.reduce(
+          (acc, r) => acc + (Number(r.cajas) || 0),
+          0
+        );
+      }
+    } catch (e) {
+      console.warn('Error obteniendo totales de recepciones:', e);
+    }
+  }
+
+  // Si NO tenemos cajas en productos, las traemos desde CLASIFICACION
+  if ((!cajasClasificadas || cajasClasificadas === 0) && entregaId) {
+    try {
+      const { data: cls } = await supabase
+        .from('clasificacion')
+        .select('kg, cajas, tipo')
+        .eq('entrega_id', entregaId);
+
+      if (Array.isArray(cls) && cls.length) {
+        cajasClasificadas = cls.reduce(
+          (acc, r) => acc + (Number(r.cajas) || 0),
+          0
+        );
+        if (!kilosClasificados || kilosClasificados === 0) {
+          kilosClasificados = cls.reduce(
+            (acc, r) => acc + (Number(r.kg) || 0),
+            0
+          );
+        }
+
+        // llenar mapa por tipo usando la tabla de clasificacion
+        cls.forEach((r) => {
+          const key =
+            (r.tipo && String(r.tipo).trim()) ||
+            'Sin tipo';
+          const c = Number(r.cajas) || 0;
+          cajasPorTipo[key] = (cajasPorTipo[key] || 0) + c;
+        });
+      }
+    } catch (e) {
+      console.warn('Error obteniendo totales desde clasificacion:', e);
+    }
+  }
+
+  // Valores que se mostrarán en la TARJETA:
+  // Prioridad: lo RECIBIDO; si no hay, uso lo CLASIFICADO
+  const panelKg = kilosRecibidos ?? kilosClasificados;
+  const panelCajas = cajasRecibidas ?? cajasClasificadas;
 
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
@@ -135,7 +244,12 @@ async function loadImageForJsPDF(url) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.text('Registro SAGARPA: EMP0416058459/2021', titleCenterX, 28, { align: 'center' });
-  doc.text('Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro', titleCenterX, 34, { align: 'center' });
+  doc.text(
+    'Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro',
+    titleCenterX,
+    34,
+    { align: 'center' }
+  );
 
   // Caja lateral
   doc.setFont('helvetica', 'bold');
@@ -162,91 +276,53 @@ async function loadImageForJsPDF(url) {
   doc.text(`Cliente: ${venta.nombre_cliente}`, margin, y);
   y += 10;
 
-// 🔝 RESUMEN ARRIBA (Kilos y Cajas) — tarjeta con iconos a la derecha
-let resumenKg = 0;
-let resumenCajas = 0;
+  // 🔝 TARJETA RESUMEN
+  const panelW = 72;
+  const panelH = 28;
+  const panelX = pageW - margin - panelW;
+  const panelY = y - 10;
 
-(productos || []).forEach((p) => {
-  resumenKg += Number(p.kg ?? p.cantidad ?? 0) || 0;
-  resumenCajas += Number(p.cajas ?? 0) || 0;
-});
+  doc.setDrawColor(46, 125, 50);
+  doc.setLineWidth(0.4);
+  doc.rect(panelX, panelY, panelW, panelH);
 
-// Fallback: si no vienen cajas en productos, intenta traerlas desde 'clasificacion' por entrega_id/recepcion_id
-if ((resumenCajas || 0) === 0) {
-  try {
-    let entregaId = venta?.clasificacion_entrega_id ? String(venta.clasificacion_entrega_id) : null;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text('Kilos recibidos', panelX + 20, panelY + 9);
+  doc.text('Cajas recibidas', panelX + 20, panelY + 20);
 
-    if (!entregaId && venta?.recepcion_id != null) {
-      const { data: rec } = await supabase
-        .from('recepciones')
-        .select('entrega_id')
-        .eq('id', venta.recepcion_id)
-        .single();
-      if (rec?.entrega_id) entregaId = String(rec.entrega_id);
-    }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text((panelKg || 0).toLocaleString(), panelX + 52, panelY + 9, {
+    align: 'right',
+  });
+  doc.text((panelCajas || 0).toLocaleString(), panelX + 52, panelY + 20, {
+    align: 'right',
+  });
 
-    if (entregaId) {
-      const { data: cls } = await supabase
-        .from('clasificacion')
-        .select('cajas')
-        .eq('entrega_id', entregaId);
+  const boxIcon = await loadImageAsDataURL('/icons/box.jpg');
+  const kgIcon = await loadImageAsDataURL('/icons/kg.png');
 
-      if (Array.isArray(cls) && cls.length) {
-        const sumCajas = cls.reduce((acc, r) => acc + (Number(r.cajas) || 0), 0);
-        if (sumCajas > 0) resumenCajas = sumCajas;
-      }
-    }
-  } catch (e) {
-    console.warn('No se pudieron obtener cajas desde clasificacion:', e);
-  }
-}
+  if (kgIcon) doc.addImage(kgIcon, 'PNG', panelX + 5, panelY + 2, 12, 12);
+  if (boxIcon) doc.addImage(boxIcon, 'JPG', panelX + 5, panelY + 13, 12, 12);
 
-// --- Tarjeta (panel) a la derecha ---
-const panelW = 72;
-const panelH = 28;
-const panelX = pageW - margin - panelW;
-const panelY = y - 10;
+  // Info de clasificado debajo de la tarjeta
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  const infoY = panelY + panelH + 8;
+  doc.text(
+    `Kg clasificados: ${(kilosClasificados || 0).toLocaleString()}   ` +
+      `Cajas clasificadas: ${(cajasClasificadas || 0).toLocaleString()}`,
+    margin,
+    infoY
+  );
 
-// Caja del panel
-doc.setDrawColor(46, 125, 50);
-doc.setLineWidth(0.4);
-doc.rect(panelX, panelY, panelW, panelH);
+  y = infoY + 6;
 
-// Títulos
-doc.setFont('helvetica', 'bold');
-doc.setFontSize(9);
-doc.text('Kilos', panelX + 20, panelY + 9);
-doc.text('Cajas', panelX + 20, panelY + 20);
-
-// Valores
-doc.setFont('helvetica', 'bold');
-doc.setFontSize(12);
-doc.text(resumenKg.toLocaleString(), panelX + 52, panelY + 9, { align: 'right' });
-doc.text(resumenCajas.toLocaleString(), panelX + 52, panelY + 20, { align: 'right' });
-
-// Iconos
-const boxIcon = await loadImageAsDataURL('/icons/box.jpg');
-const kgIcon  = await loadImageAsDataURL('/icons/kg.png');
-
-if (kgIcon)  doc.addImage(kgIcon,  'PNG', panelX + 5, panelY + 2,  12, 12);
-if (boxIcon) doc.addImage(boxIcon, 'JPG', panelX + 5, panelY + 13, 12, 12);
-
-// Deja algo de aire antes de las tablas
-y += 12;
-
-
-
-
-  // Agrupar por tipo_origen
+  // ===== DETALLE AGRUPADO POR TIPO_ORIGEN =====
   const grupos = {};
   (productos || []).forEach((p) => {
-    const claveGrupo =
-      (p.tipo_origen && String(p.tipo_origen).trim()) ||
-      (p.tipo && String(p.tipo).trim()) ||
-      (p.descripcion && String(p.descripcion).trim()) ||
-      (p.calibre && String(p.calibre).trim()) ||
-      'Sin tipo';
-
+    const claveGrupo = getTipoKeyFromProducto(p);
     if (!grupos[claveGrupo]) grupos[claveGrupo] = [];
     grupos[claveGrupo].push(p);
   });
@@ -267,16 +343,22 @@ y += 12;
       const cajas = Number(p.cajas ?? 0) || 0;
       const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
       const importe = Number(p.importe ?? kg * precio) || 0;
+
       subtotalKg += kg;
       subtotalCajas += cajas;
       subtotalImporte += importe;
     });
 
+    // 🔧 Si no tenemos cajas en productos, usar las de clasificacion por tipo
+    if ((!subtotalCajas || subtotalCajas === 0) && cajasPorTipo[tituloGrupo] != null) {
+      subtotalCajas = cajasPorTipo[tituloGrupo];
+    }
+
     totalGeneralKg += subtotalKg;
     totalGeneralCajas += subtotalCajas;
     totalGeneralImporte += subtotalImporte;
 
-    // Encabezado del grupo
+    // Título del grupo
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.setTextColor(46, 125, 50);
@@ -284,36 +366,47 @@ y += 12;
     doc.setTextColor(0);
     y += 10;
 
-    // Tabla del grupo
+    // Tabla
     autoTable(doc, {
       startY: y,
-      head: [['Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
+      head: [['Cajas', 'Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
       body: items.map((p) => {
         const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
+        const cajas = Number(p.cajas ?? 0) || 0;
         const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
         const importe = Number(p.importe ?? kg * precio) || 0;
-        const descripcion = String(p.descripcion ?? p.calibre ?? p.tipo ?? '-');
-        return [kg.toFixed(0), descripcion, money(precio), money(importe)];
+        const descripcion = String(
+          p.descripcion ?? p.calibre ?? p.tipo ?? '-'
+        );
+        return [
+          cajas ? cajas.toString() : '',
+          kg.toFixed(0),
+          descripcion,
+          money(precio),
+          money(importe),
+        ];
       }),
       styles: { fontSize: 10, cellPadding: 2 },
       headStyles: { fillColor: [46, 125, 50], textColor: 255 },
       alternateRowStyles: { fillColor: [238, 245, 238] },
       columnStyles: {
-        0: { halign: 'right', cellWidth: 32 },
-        1: { cellWidth: 'auto' },
-        2: { halign: 'right', cellWidth: 35 },
-        3: { halign: 'right', cellWidth: 35 },
+        0: { halign: 'right', cellWidth: 18 }, // Cajas
+        1: { halign: 'right', cellWidth: 25 }, // Kg
+        2: { cellWidth: 'auto' },              // Descripción
+        3: { halign: 'right', cellWidth: 30 }, // Precio
+        4: { halign: 'right', cellWidth: 30 }, // Importe
       },
       theme: 'striped',
       margin: { left: margin, right: margin },
     });
 
-    // Subtotal (se mantiene como antes)
     y = doc.lastAutoTable.finalY + 6;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
     doc.text(
-      `Subtotal ${tituloGrupo}: ${subtotalKg.toLocaleString()} kg — ${money(subtotalImporte)}`,
+      `Subtotal ${tituloGrupo}: ${subtotalCajas.toLocaleString()} cajas, ${subtotalKg.toLocaleString()} kg — ${money(
+        subtotalImporte
+      )}`,
       pageW - margin,
       y,
       { align: 'right' }
@@ -321,22 +414,30 @@ y += 12;
     y += 10;
   }
 
- // 🔚 Totales al final: **solo dinero** (kilos/cajas ya están arriba)
-const anticipo = parseFloat(venta.anticipo || 0);
-const saldo = totalGeneralImporte - anticipo;
+  // Totales finales de dinero
+  const anticipo = parseFloat(venta.anticipo || 0);
+  const saldo = totalGeneralImporte - anticipo;
 
-doc.setFont('helvetica', 'bold');
-doc.setFontSize(12);
-doc.text(`Total General: ${money(totalGeneralImporte)}`, pageW - margin, y + 4, { align: 'right' });
-
-if (anticipo > 0) {
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  doc.text(`Anticipo: ${money(anticipo)}`, pageW - margin, y + 10, { align: 'right' });
   doc.setFont('helvetica', 'bold');
-  doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, y + 16, { align: 'right' });
-}
+  doc.setFontSize(12);
+  doc.text(
+    `Total General: ${money(totalGeneralImporte)}`,
+    pageW - margin,
+    y + 4,
+    { align: 'right' }
+  );
 
+  if (anticipo > 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(`Anticipo: ${money(anticipo)}`, pageW - margin, y + 10, {
+      align: 'right',
+    });
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, y + 16, {
+      align: 'right',
+    });
+  }
 
   // Footer
   const pageCount = doc.getNumberOfPages();
@@ -350,11 +451,16 @@ if (anticipo > 0) {
       margin,
       pageH - 8
     );
-    doc.text(`Página ${i} de ${pageCount}`, pageW - margin, pageH - 8, { align: 'right' });
+    doc.text(`Página ${i} de ${pageCount}`, pageW - margin, pageH - 8, {
+      align: 'right',
+    });
   }
 
   doc.save(`nota_compra_${fmtFolio(venta.numero_nota)}.pdf`);
 };
+
+
+
 
 
   // ===== Rango por DÍA =====

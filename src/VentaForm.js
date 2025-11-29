@@ -127,9 +127,10 @@ export default function VentaForm() {
       fecha: fechaYMD, // fuerza 'YYYY-MM-DD' para el <input type="date">
     }));
 
+    // ⬇️ AHORA TRAEMOS TAMBIÉN CAJAS
     const { data: registros, error } = await supabase
       .from('clasificacion')
-      .select('tipo, calibre, kg')
+      .select('tipo, calibre, kg, cajas')
       .eq('entrega_id', idStr);
 
     if (error) {
@@ -143,23 +144,27 @@ export default function VentaForm() {
       return;
     }
 
-    // Agrupar por tipo y calibre
+    // Agrupar por tipo y calibre, sumando KG y CAJAS
     const porTipo = {};
     for (const reg of registros) {
       const tipo = reg.tipo || 'SIN TIPO';
       const calibre = reg.calibre || 'Sin calibre';
       const kilos = parseFloat(reg.kg) || 0;
+      const cajas = parseFloat(reg.cajas) || 0;
 
       if (!porTipo[tipo]) porTipo[tipo] = {};
-      if (!porTipo[tipo][calibre]) porTipo[tipo][calibre] = 0;
-      porTipo[tipo][calibre] += kilos;
+      if (!porTipo[tipo][calibre]) porTipo[tipo][calibre] = { kg: 0, cajas: 0 };
+
+      porTipo[tipo][calibre].kg += kilos;
+      porTipo[tipo][calibre].cajas += cajas;
     }
 
     const resultado = {};
     Object.keys(porTipo).forEach(tipo => {
-      resultado[tipo] = Object.entries(porTipo[tipo]).map(([descripcion, cantidad], i) => ({
+      resultado[tipo] = Object.entries(porTipo[tipo]).map(([descripcion, agg], i) => ({
         id: `${idStr}-${tipo}-${i}`,
-        cantidad,
+        cantidad: agg.kg,     // kilos
+        cajas: agg.cajas,     // NUEVO: total de cajas por calibre
         descripcion,
         precio: '',
         importe: 0,
@@ -196,28 +201,28 @@ export default function VentaForm() {
     const recepcionIdParaInsert = esNumerico ? Number(recId) : null;
 
     const filasValidas = Object.entries(productosPorTipo).flatMap(([tipoOrigen, filas]) =>
-  filas
-    .map(p => {
-      const cantidadNum = parseFloat(p.cantidad);
-      const precioNum   = parseFloat(p.precio);
+      filas
+        .map(p => {
+          const cantidadNum = parseFloat(p.cantidad);
+          const precioNum   = parseFloat(p.precio);
 
-      const esCantidadValida = !Number.isNaN(cantidadNum) && cantidadNum > 0;
-      const esPrecioValido   = !Number.isNaN(precioNum) && precioNum >= 0; // permite 0
+          const esCantidadValida = !Number.isNaN(cantidadNum) && cantidadNum > 0;
+          const esPrecioValido   = !Number.isNaN(precioNum) && precioNum >= 0; // permite 0
 
-      if (!p.descripcion || !esCantidadValida || !esPrecioValido) return null;
+          if (!p.descripcion || !esCantidadValida || !esPrecioValido) return null;
 
-      return {
-        tipo: p.descripcion,
-        tipo_origen: tipoOrigen,
-        calibre: p.descripcion,
-        kg: cantidadNum,
-        precio_unitario: precioNum,
-        importe: cantidadNum * precioNum,
-      };
-    })
-    .filter(Boolean)
-);
-
+          return {
+            tipo: p.descripcion,
+            tipo_origen: tipoOrigen,
+            calibre: p.descripcion,
+            kg: cantidadNum,
+            cajas: Number(p.cajas) || 0,            // 👈 guardamos las cajas por renglón
+            precio_unitario: precioNum,
+            importe: cantidadNum * precioNum,
+          };
+        })
+        .filter(Boolean)
+    );
 
     if (filasValidas.length === 0) {
       setMensaje('❌ Debes ingresar al menos un producto con cantidad, descripción y precio.');
@@ -239,7 +244,6 @@ export default function VentaForm() {
       productos: filasValidas,
       total: filasValidas.reduce((sum, p) => sum + p.importe, 0),
       anticipo: anticipo === '' ? 0 : (parseFloat(anticipo) || 0),
-      
     };
 
     const payloadConUUID = {
@@ -374,53 +378,75 @@ export default function VentaForm() {
           <div key={tipo} style={{ marginTop: '2rem' }}>
             <h4 style={{ color: '#2e7d32' }}>{tipo}</h4>
             <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.5rem' }}>
-              <thead>
-                <tr style={{ backgroundColor: '#eee' }}>
-                  <th>Kilos</th>
-                  <th>Descripción</th>
-                  <th>Precio</th>
-                  <th>Importe</th>
-                </tr>
-              </thead>
-              <tbody>
-                {productosPorTipo[tipo].map((p, index) => (
-                  <tr key={p.id}>
-                    <td>
-                      <input
-                        type="number"
-                        value={p.cantidad}
-                        onChange={(e) => handleCambioProducto(tipo, index, 'cantidad', e.target.value)}
-                        style={inputTabla}
-                      />
-                    </td>
-                    <td>
-                      <select
-                        value={p.descripcion || ''}
-                        onChange={(e) => handleCambioProducto(tipo, index, 'descripcion', e.target.value)}
-                        style={selectTabla}
-                      >
-                        <option value="">Selecciona</option>
-                        {!OPCIONES_CALIBRE.includes(p.descripcion) && p.descripcion && (
-                          <option value={p.descripcion}>{p.descripcion}</option>
-                        )}
-                        {OPCIONES_CALIBRE.map(op => (
-                          <option key={op} value={op}>{op}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        value={p.precio}
-                        onChange={(e) => handleCambioProducto(tipo, index, 'precio', e.target.value)}
-                        style={inputTabla}
-                      />
-                    </td>
-                    <td style={{ textAlign: 'right' }}>{p.importe.toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+  <thead>
+    <tr style={{ backgroundColor: '#eee' }}>
+      <th>Cajas</th>
+      <th>Kilos</th>
+      <th>Descripción</th>
+      <th>Precio</th>
+      <th>Importe</th>
+    </tr>
+  </thead>
+  <tbody>
+    {productosPorTipo[tipo].map((p, index) => (
+      <tr key={p.id}>
+        {/* Cajas (solo lectura) */}
+        <td style={{ textAlign: 'right' }}>
+          {Number(p.cajas || 0).toLocaleString()}
+        </td>
+
+        {/* Kilos (editable) */}
+        <td>
+          <input
+            type="number"
+            value={p.cantidad}
+            onChange={(e) =>
+              handleCambioProducto(tipo, index, 'cantidad', e.target.value)
+            }
+            style={inputTabla}
+          />
+        </td>
+
+        {/* Descripción */}
+        <td>
+          <select
+            value={p.descripcion || ''}
+            onChange={(e) =>
+              handleCambioProducto(tipo, index, 'descripcion', e.target.value)
+            }
+            style={selectTabla}
+          >
+            <option value="">Selecciona</option>
+            {!OPCIONES_CALIBRE.includes(p.descripcion) && p.descripcion && (
+              <option value={p.descripcion}>{p.descripcion}</option>
+            )}
+            {OPCIONES_CALIBRE.map((op) => (
+              <option key={op} value={op}>
+                {op}
+              </option>
+            ))}
+          </select>
+        </td>
+
+        {/* Precio */}
+        <td>
+          <input
+            type="number"
+            value={p.precio}
+            onChange={(e) =>
+              handleCambioProducto(tipo, index, 'precio', e.target.value)
+            }
+            style={inputTabla}
+          />
+        </td>
+
+        {/* Importe */}
+        <td style={{ textAlign: 'right' }}>{p.importe.toFixed(2)}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
           </div>
         ))}
 

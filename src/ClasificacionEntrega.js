@@ -10,6 +10,7 @@ export default function ClasificacionEntrega() {
   const [detalleRecepcion, setDetalleRecepcion] = useState([]);
   const [clasificaciones, setClasificaciones] = useState({});
   const [totalKilosRecepcion, setTotalKilosRecepcion] = useState(null);
+  const [totalCajasRecepcion, setTotalCajasRecepcion] = useState(null);
   const [toast, setToast] = useState({ text: '', color: '' });
   const [clasificados, setClasificados] = useState(new Set());
 
@@ -56,30 +57,25 @@ export default function ClasificacionEntrega() {
     verificarSesion();
   }, [navigate]);
 
-useEffect(() => {
-  const cargarEntregas = async () => {
-    // Trae directamente las pendientes desde la vista
-    const { data, error } = await supabase
-      .from('v_entregas_pendientes')
-      .select('entrega_id, cliente_nombre, fecha_hora, total_kilos')
-      .order('fecha_hora', { ascending: false });
+  // Cargar entregas pendientes desde la vista
+  useEffect(() => {
+    const cargarEntregas = async () => {
+      const { data, error } = await supabase
+        .from('v_entregas_pendientes')
+        .select('entrega_id, cliente_nombre, fecha_hora, total_kilos')
+        .order('fecha_hora', { ascending: false });
 
-    if (error) {
-      console.error(error);
-      setEntregas([]);
-      return;
-    }
+      if (error) {
+        console.error(error);
+        setEntregas([]);
+        return;
+      }
 
-    // data ya viene agrupada, sumada y filtrada (solo pendientes)
-    // Estructura esperada: [{ entrega_id, cliente_nombre, fecha_hora, total_kilos }, ...]
-    setEntregas(data || []);
-  };
+      setEntregas(data || []);
+    };
 
-  cargarEntregas();
-}, []);
-
-
-
+    cargarEntregas();
+  }, []);
 
   // 📋 Selección de entrega
   const handleEntregaChange = async (e) => {
@@ -88,47 +84,62 @@ useEffect(() => {
 
     setEntregaSeleccionada(entrega);
     setTotalKilosRecepcion(entrega?.total_kilos || 0);
+    setTotalCajasRecepcion(null);
     setDetalleRecepcion([]);
     setClasificaciones({});
 
     if (!entregaId) return;
 
+    // Traemos también cajas desde recepciones
     const { data: detalle, error: errDetalle } = await supabase
-  .from('recepciones')
-  .select('tipo, kilos')
-  .eq('entrega_id', entregaId);
+      .from('recepciones')
+      .select('tipo, kilos, cajas')
+      .eq('entrega_id', entregaId);
 
-if (!errDetalle && Array.isArray(detalle)) {
-  // 👉 AGRUPA POR EL TIPO EXACTO (SIN NORMALIZAR)
-  const mapTipo = new Map();
-  for (const r of detalle) {
-    const t = String(r.tipo || '').trim(); // usar tal cual
-    const kg = parseFloat(r.kilos || 0);
-    mapTipo.set(t, (mapTipo.get(t) || 0) + kg);
-  }
+    if (errDetalle || !Array.isArray(detalle)) return;
 
-  // Orden preferente; lo demás queda alfabético al final
-  const ordenPreferente = [
-    'Loca', 'Loca Tamaño', 'Loca Proceso',
-    'Negro', 'Negro Tamaño', 'Negro Proceso',
-    'Aventajado', 'Aventajado Tamaño', 'Aventajado Proceso',
-    'Desecho'
-  ];
+    // 👉 AGRUPA POR EL TIPO EXACTO y suma kilos y cajas
+    const mapTipo = new Map(); // tipo -> { kilos, cajas }
 
-  const lista = Array.from(mapTipo.entries())
-    .sort((a, b) => {
-      const ia = ordenPreferente.indexOf(a[0]);
-      const ib = ordenPreferente.indexOf(b[0]);
-      if (ia === -1 && ib === -1) return a[0].localeCompare(b[0]);
-      if (ia === -1) return 1;
-      if (ib === -1) return -1;
-      return ia - ib;
-    })
-    .map(([tipo, kilos]) => ({ tipo, kilos }));
+    for (const r of detalle) {
+      const t = String(r.tipo || '').trim();
+      const kg = parseFloat(r.kilos || 0);
+      const cj = parseFloat(r.cajas || 0);
 
-  setDetalleRecepcion(lista);
-}
+      const current = mapTipo.get(t) || { kilos: 0, cajas: 0 };
+      current.kilos += isNaN(kg) ? 0 : kg;
+      current.cajas += isNaN(cj) ? 0 : cj;
+      mapTipo.set(t, current);
+    }
 
+    // Orden preferente; lo demás alfabético
+    const ordenPreferente = [
+      'Loca', 'Loca Tamaño', 'Loca Proceso',
+      'Negro', 'Negro Tamaño', 'Negro Proceso',
+      'Aventajado', 'Aventajado Tamaño', 'Aventajado Proceso',
+      'Desecho'
+    ];
+
+    const lista = Array.from(mapTipo.entries())
+      .sort((a, b) => {
+        const ia = ordenPreferente.indexOf(a[0]);
+        const ib = ordenPreferente.indexOf(b[0]);
+        if (ia === -1 && ib === -1) return a[0].localeCompare(b[0]);
+        if (ia === -1) return 1;
+        if (ib === -1) return -1;
+        return ia - ib;
+      })
+      .map(([tipo, agg]) => ({
+        tipo,
+        kilos: agg.kilos,
+        cajas: agg.cajas,
+      }));
+
+    setDetalleRecepcion(lista);
+
+    // Total de cajas recibidas (todas las filas)
+    const totalCj = lista.reduce((sum, it) => sum + (Number(it.cajas) || 0), 0);
+    setTotalCajasRecepcion(totalCj);
   };
 
   // ✏️ Actualizar inputs
@@ -145,7 +156,7 @@ if (!errDetalle && Array.isArray(detalle)) {
     });
   };
 
-  // 🧮 Totales
+  // 🧮 Totales de KG
   const totalPorTipo = (tipo) => {
     if (!clasificaciones[tipo]) return 0;
     return Object.values(clasificaciones[tipo]).reduce(
@@ -171,7 +182,7 @@ if (!errDetalle && Array.isArray(detalle)) {
       return;
     }
 
-    // 👉 Fechas sin desfase: solo YYYY-MM-DD (sin toISOString/UTC)
+    // 👉 Fechas sin desfase: solo YYYY-MM-DD
     const fechaSolo = String(entregaSeleccionada.fecha_hora || '').slice(0, 10);
 
     const registros = [];
@@ -184,7 +195,7 @@ if (!errDetalle && Array.isArray(detalle)) {
             cliente_nombre: entregaSeleccionada.cliente_nombre,
             fecha: fechaSolo,
             tipo,
-            calibre: labelFor(calibreKey),     // 👈 nombre elegido/mostrado (OTROs editables)
+            calibre: labelFor(calibreKey),
             cajas: parseInt(datos.cajas || 0),
             kg: parseFloat(datos.kg || 0)
           });
@@ -198,7 +209,7 @@ if (!errDetalle && Array.isArray(detalle)) {
       return;
     }
 
-    // 🧮 Debe clasificar exactamente la misma cantidad
+    // 🧮 Debe clasificar exactamente la misma cantidad de KG
     const totalClasificadoKg = totalGeneral();
     const diferencia = Math.abs(totalClasificadoKg - totalKilosRecepcion);
 
@@ -234,6 +245,7 @@ if (!errDetalle && Array.isArray(detalle)) {
       setEntregaSeleccionada(null);
       setDetalleRecepcion([]);
       setClasificaciones({});
+      setTotalCajasRecepcion(null);
 
       setTimeout(() => setToast({ text: '', color: '' }), 4000);
     }
@@ -364,11 +376,19 @@ if (!errDetalle && Array.isArray(detalle)) {
               <>
                 <p style={{ marginTop: '0.5rem', fontWeight: 'bold' }}>
                   Total de kilos recibidos: {Number(totalKilosRecepcion).toLocaleString()} KG
+                  {totalCajasRecepcion != null && (
+                    <> — {Number(totalCajasRecepcion).toLocaleString()} CAJAS</>
+                  )}
                 </p>
 
                 {detalleRecepcion.map((item, i) => (
                   <div key={i} style={{ marginTop: '1.5rem' }}>
-                    <h4 style={{ color: '#2e7d32' }}>{item.tipo.toUpperCase()} ({item.kilos} KG)</h4>
+                    <h4 style={{ color: '#2e7d32' }}>
+                      {item.tipo.toUpperCase()} (
+                      {item.kilos.toLocaleString()} KG
+                      {item.cajas ? ` / ${item.cajas.toLocaleString()} CAJAS` : ''}
+                      )
+                    </h4>
                     <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.5rem' }}>
                       <thead style={{ backgroundColor: '#2e7d32', color: '#fff' }}>
                         <tr>
