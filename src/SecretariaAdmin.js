@@ -5,13 +5,12 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 
-
 export default function SecretariaAdmin() {
   const navigate = useNavigate();
 
   const [tab, setTab] = useState('ventas'); // 'ventas' | 'recepciones' | 'clasificacion'
 
-  // 🔄 Filtro por DÍA (con hora local para evitar desfases)
+  // Filtro por DÍA (local)
   const [fecha, setFecha] = useState(() => {
     const d = new Date();
     const yyyy = d.getFullYear();
@@ -28,6 +27,28 @@ export default function SecretariaAdmin() {
 
   const [hoverRow, setHoverRow] = useState(null);
   useEffect(() => setHoverRow(null), [tab]);
+
+  // notas revisadas por usuario actual (venta_id -> true)
+  const [ventasRevisadas, setVentasRevisadas] = useState({});
+  // lista de correos que han revisado cada venta (venta_id -> [email,...])
+  const [revisoresPorVenta, setRevisoresPorVenta] = useState({});
+
+  // 👉 Separar ventas en PENDIENTES y REVISADAS (ordenadas por fecha desc.)
+  const ventasPendientes = useMemo(
+    () =>
+      (ventas || [])
+        .filter((v) => !ventasRevisadas[v.id])
+        .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)),
+    [ventas, ventasRevisadas]
+  );
+
+  const ventasRevisadasSolo = useMemo(
+    () =>
+      (ventas || [])
+        .filter((v) => ventasRevisadas[v.id])
+        .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)),
+    [ventas, ventasRevisadas]
+  );
 
   const money = (n) =>
     new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(n || 0));
@@ -61,413 +82,417 @@ export default function SecretariaAdmin() {
     }
   }
 
-  // ===== PDF (por tipo_origen + anticipo y saldo pendiente) =====
-  // ===== PDF (por tipo_origen + anticipo y saldo pendiente) =====
-// Carga imagen del /public y devuelve { dataUrl, format } para jsPDF.addImage
-async function loadImageForJsPDF(url) {
-  try {
-    const res = await fetch(url, { cache: 'no-store' }); // evita viejo cache
-    if (!res.ok) {
-      console.warn('No se pudo cargar imagen:', url, res.status);
+  async function loadImageForJsPDF(url) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        console.warn('No se pudo cargar imagen:', url, res.status);
+        return null;
+      }
+      const blob = await res.blob();
+      let format = 'PNG';
+      const mime = (blob.type || '').toLowerCase();
+      if (mime.includes('jpeg') || mime.includes('jpg')) format = 'JPEG';
+      else if (mime.includes('png')) format = 'PNG';
+
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = reject;
+        fr.readAsDataURL(blob);
+      });
+
+      return { dataUrl, format };
+    } catch (err) {
+      console.warn('loadImageForJsPDF error:', url, err);
       return null;
     }
-    const blob = await res.blob();
+  }
 
-    // Detecta formato para jsPDF
-    let format = 'PNG';
-    const mime = (blob.type || '').toLowerCase();
-    if (mime.includes('jpeg') || mime.includes('jpg')) format = 'JPEG';
-    else if (mime.includes('png')) format = 'PNG';
-    else {
-      // fallback: si no reconoce, intenta PNG
-      format = 'PNG';
+  const descargarPDF = async (venta) => {
+    let productos;
+    try {
+      if (typeof venta.productos === 'string') {
+        productos = JSON.parse(venta.productos);
+      } else if (Array.isArray(venta.productos)) {
+        productos = venta.productos;
+      } else {
+        return alert(`❌ La venta #${venta.numero_nota} no tiene detalles para PDF.`);
+      }
+    } catch {
+      return alert(`❌ La venta #${venta.numero_nota} tiene formato incorrecto.`);
     }
 
-    const dataUrl = await new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(fr.result);
-      fr.onerror = reject;
-      fr.readAsDataURL(blob);
+    // === Totales CLASIFICADOS (lo que se vende) ===
+    let kilosClasificados = 0;
+    let cajasClasificadas = 0;
+    const cajasPorTipo = {};
+
+    const getTipoKeyFromProducto = (p) =>
+      (p.tipo_origen && String(p.tipo_origen).trim()) ||
+      (p.tipo && String(p.tipo).trim()) ||
+      (p.descripcion && String(p.descripcion).trim()) ||
+      (p.calibre && String(p.calibre).trim()) ||
+      'Sin tipo';
+
+    (productos || []).forEach((p) => {
+      const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
+      const cajas = Number(p.cajas ?? 0) || 0;
+
+      kilosClasificados += kg;
+      cajasClasificadas += cajas;
+
+      const key = getTipoKeyFromProducto(p);
+      cajasPorTipo[key] = (cajasPorTipo[key] || 0) + cajas;
     });
 
-    return { dataUrl, format };
-  } catch (err) {
-    console.warn('loadImageForJsPDF error:', url, err);
-    return null;
-  }
-}
+    // === Totales RECIBIDOS (desde recepciones) ===
+    let kilosRecibidos = null;
+    let cajasRecibidas = null;
 
- const descargarPDF = async (venta) => {
-  let productos;
-  try {
-    if (typeof venta.productos === 'string') {
-      productos = JSON.parse(venta.productos);
-    } else if (Array.isArray(venta.productos)) {
-      productos = venta.productos;
-    } else {
-      return alert(`❌ La venta #${venta.numero_nota} no tiene detalles para PDF.`);
-    }
-  } catch {
-    return alert(`❌ La venta #${venta.numero_nota} tiene formato incorrecto.`);
-  }
+    let entregaId = venta?.clasificacion_entrega_id
+      ? String(venta.clasificacion_entrega_id)
+      : null;
 
-  // === Totales CLASIFICADOS (lo que se vende) ===
-  let kilosClasificados = 0;
-  let cajasClasificadas = 0;
-  const cajasPorTipo = {}; // mapa por tipo para usar en subtotales
-
-  const getTipoKeyFromProducto = (p) =>
-    (p.tipo_origen && String(p.tipo_origen).trim()) ||
-    (p.tipo && String(p.tipo).trim()) ||
-    (p.descripcion && String(p.descripcion).trim()) ||
-    (p.calibre && String(p.calibre).trim()) ||
-    'Sin tipo';
-
-  (productos || []).forEach((p) => {
-    const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
-    const cajas = Number(p.cajas ?? 0) || 0;
-
-    kilosClasificados += kg;
-    cajasClasificadas += cajas;
-
-    const key = getTipoKeyFromProducto(p);
-    cajasPorTipo[key] = (cajasPorTipo[key] || 0) + cajas;
-  });
-
-  // === Totales RECIBIDOS (desde recepciones) ===
-  let kilosRecibidos = null;
-  let cajasRecibidas = null;
-
-  // Buscar entrega_id vinculado
-  let entregaId = venta?.clasificacion_entrega_id
-    ? String(venta.clasificacion_entrega_id)
-    : null;
-
-  // Si no viene en ventas, lo buscamos por recepcion_id
-  if (!entregaId && venta?.recepcion_id != null) {
-    try {
-      const { data: recRow } = await supabase
-        .from('recepciones')
-        .select('entrega_id')
-        .eq('id', venta.recepcion_id)
-        .maybeSingle();
-
-      if (recRow?.entrega_id) entregaId = String(recRow.entrega_id);
-    } catch (e) {
-      console.warn('Error obteniendo entrega_id desde recepcion:', e);
-    }
-  }
-
-  // Si tenemos entrega_id, sumamos desde recepciones
-  if (entregaId) {
-    try {
-      const { data: recs } = await supabase
-        .from('recepciones')
-        .select('kilos, cajas')
-        .eq('entrega_id', entregaId);
-
-      if (Array.isArray(recs) && recs.length) {
-        kilosRecibidos = recs.reduce(
-          (acc, r) => acc + (Number(r.kilos) || 0),
-          0
-        );
-        cajasRecibidas = recs.reduce(
-          (acc, r) => acc + (Number(r.cajas) || 0),
-          0
-        );
+    if (!entregaId && venta?.recepcion_id != null) {
+      try {
+        const { data: recRow } = await supabase
+          .from('recepciones')
+          .select('entrega_id')
+          .eq('id', venta.recepcion_id)
+          .maybeSingle();
+        if (recRow?.entrega_id) entregaId = String(recRow.entrega_id);
+      } catch (e) {
+        console.warn('Error obteniendo entrega_id desde recepcion:', e);
       }
-    } catch (e) {
-      console.warn('Error obteniendo totales de recepciones:', e);
     }
-  }
 
-  // Si NO tenemos cajas en productos, las traemos desde CLASIFICACION
-  if ((!cajasClasificadas || cajasClasificadas === 0) && entregaId) {
-    try {
-      const { data: cls } = await supabase
-        .from('clasificacion')
-        .select('kg, cajas, tipo')
-        .eq('entrega_id', entregaId);
+    if (entregaId) {
+      try {
+        const { data: recs } = await supabase
+          .from('recepciones')
+          .select('kilos, cajas')
+          .eq('entrega_id', entregaId);
 
-      if (Array.isArray(cls) && cls.length) {
-        cajasClasificadas = cls.reduce(
-          (acc, r) => acc + (Number(r.cajas) || 0),
-          0
-        );
-        if (!kilosClasificados || kilosClasificados === 0) {
-          kilosClasificados = cls.reduce(
-            (acc, r) => acc + (Number(r.kg) || 0),
+        if (Array.isArray(recs) && recs.length) {
+          kilosRecibidos = recs.reduce(
+            (acc, r) => acc + (Number(r.kilos) || 0),
+            0
+          );
+          cajasRecibidas = recs.reduce(
+            (acc, r) => acc + (Number(r.cajas) || 0),
             0
           );
         }
-
-        // llenar mapa por tipo usando la tabla de clasificacion
-        cls.forEach((r) => {
-          const key =
-            (r.tipo && String(r.tipo).trim()) ||
-            'Sin tipo';
-          const c = Number(r.cajas) || 0;
-          cajasPorTipo[key] = (cajasPorTipo[key] || 0) + c;
-        });
+      } catch (e) {
+        console.warn('Error obteniendo totales de recepciones:', e);
       }
-    } catch (e) {
-      console.warn('Error obteniendo totales desde clasificacion:', e);
-    }
-  }
-
-  // Valores que se mostrarán en la TARJETA:
-  // Prioridad: lo RECIBIDO; si no hay, uso lo CLASIFICADO
-  const panelKg = kilosRecibidos ?? kilosClasificados;
-  const panelCajas = cajasRecibidas ?? cajasClasificadas;
-
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const margin = 14;
-
-  // Encabezado
-  const logoX = margin, logoY = 16, logoW = 24, logoH = 24, gap = 6;
-  const boxW = 56, boxH = 16;
-  const boxX = pageW - margin - boxW, boxY = 16;
-
-  const logoData = await loadImageAsDataURL('/aguacate.jpg');
-  if (logoData) doc.addImage(logoData, 'JPEG', logoX, logoY - 2, logoW, logoH);
-
-  const titleLeft = logoX + logoW + gap;
-  const titleRight = boxX - gap;
-  const titleCenterX = (titleLeft + titleRight) / 2;
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text('Aguacates Ramírez', titleCenterX, 22, { align: 'center' });
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text('Registro SAGARPA: EMP0416058459/2021', titleCenterX, 28, { align: 'center' });
-  doc.text(
-    'Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro',
-    titleCenterX,
-    34,
-    { align: 'center' }
-  );
-
-  // Caja lateral
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text('Nota de Compra', boxX, boxY - 2);
-  doc.setDrawColor(0);
-  doc.rect(boxX, boxY, boxW, boxH);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text('Folio:', boxX + 3, boxY + 6);
-  doc.setFont('helvetica', 'bold');
-  doc.text(fmtFolio(venta.numero_nota), boxX + 24, boxY + 6);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Fecha: ${fmtFecha(venta.fecha)}`, boxX + 3, boxY + 12);
-
-  // Datos cliente
-  let y = Math.max(logoY + logoH + 12, boxY + boxH + 12);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text('Datos del cliente', margin, y);
-  y += 10;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text(`Cliente: ${venta.nombre_cliente}`, margin, y);
-  y += 10;
-
-  // 🔝 TARJETA RESUMEN
-  const panelW = 72;
-  const panelH = 28;
-  const panelX = pageW - margin - panelW;
-  const panelY = y - 10;
-
-  doc.setDrawColor(46, 125, 50);
-  doc.setLineWidth(0.4);
-  doc.rect(panelX, panelY, panelW, panelH);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.text('Kilos recibidos', panelX + 20, panelY + 9);
-  doc.text('Cajas recibidas', panelX + 20, panelY + 20);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
-  doc.text((panelKg || 0).toLocaleString(), panelX + 52, panelY + 9, {
-    align: 'right',
-  });
-  doc.text((panelCajas || 0).toLocaleString(), panelX + 52, panelY + 20, {
-    align: 'right',
-  });
-
-  const boxIcon = await loadImageAsDataURL('/icons/box.jpg');
-  const kgIcon = await loadImageAsDataURL('/icons/kg.png');
-
-  if (kgIcon) doc.addImage(kgIcon, 'PNG', panelX + 5, panelY + 2, 12, 12);
-  if (boxIcon) doc.addImage(boxIcon, 'JPG', panelX + 5, panelY + 13, 12, 12);
-
-  // Info de clasificado debajo de la tarjeta
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  const infoY = panelY + panelH + 8;
-  doc.text(
-    `Kg clasificados: ${(kilosClasificados || 0).toLocaleString()}   ` +
-      `Cajas clasificadas: ${(cajasClasificadas || 0).toLocaleString()}`,
-    margin,
-    infoY
-  );
-
-  y = infoY + 6;
-
-  // ===== DETALLE AGRUPADO POR TIPO_ORIGEN =====
-  const grupos = {};
-  (productos || []).forEach((p) => {
-    const claveGrupo = getTipoKeyFromProducto(p);
-    if (!grupos[claveGrupo]) grupos[claveGrupo] = [];
-    grupos[claveGrupo].push(p);
-  });
-
-  let totalGeneralKg = 0;
-  let totalGeneralImporte = 0;
-  let totalGeneralCajas = 0;
-
-  for (const tituloGrupo in grupos) {
-    const items = grupos[tituloGrupo];
-
-    let subtotalKg = 0;
-    let subtotalImporte = 0;
-    let subtotalCajas = 0;
-
-    items.forEach((p) => {
-      const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
-      const cajas = Number(p.cajas ?? 0) || 0;
-      const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
-      const importe = Number(p.importe ?? kg * precio) || 0;
-
-      subtotalKg += kg;
-      subtotalCajas += cajas;
-      subtotalImporte += importe;
-    });
-
-    // 🔧 Si no tenemos cajas en productos, usar las de clasificacion por tipo
-    if ((!subtotalCajas || subtotalCajas === 0) && cajasPorTipo[tituloGrupo] != null) {
-      subtotalCajas = cajasPorTipo[tituloGrupo];
     }
 
-    totalGeneralKg += subtotalKg;
-    totalGeneralCajas += subtotalCajas;
-    totalGeneralImporte += subtotalImporte;
+    if ((!cajasClasificadas || cajasClasificadas === 0) && entregaId) {
+      try {
+        const { data: cls } = await supabase
+          .from('clasificacion')
+          .select('kg, cajas, tipo')
+          .eq('entrega_id', entregaId);
 
-    // Título del grupo
+        if (Array.isArray(cls) && cls.length) {
+          cajasClasificadas = cls.reduce(
+            (acc, r) => acc + (Number(r.cajas) || 0),
+            0
+          );
+          if (!kilosClasificados || kilosClasificados === 0) {
+            kilosClasificados = cls.reduce(
+              (acc, r) => acc + (Number(r.kg) || 0),
+              0
+            );
+          }
+
+          cls.forEach((r) => {
+            const key =
+              (r.tipo && String(r.tipo).trim()) ||
+              'Sin tipo';
+            const c = Number(r.cajas) || 0;
+            cajasPorTipo[key] = (cajasPorTipo[key] || 0) + c;
+          });
+        }
+      } catch (e) {
+        console.warn('Error obteniendo totales desde clasificacion:', e);
+      }
+    }
+
+    const panelKg = kilosRecibidos ?? kilosClasificados;
+    const panelCajas = cajasRecibidas ?? cajasClasificadas;
+
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 14;
+
+    // Encabezado
+    const logoX = margin, logoY = 16, logoW = 24, logoH = 24, gap = 6;
+    const boxW = 56, boxH = 16;
+    const boxX = pageW - margin - boxW, boxY = 16;
+
+    const logoData = await loadImageAsDataURL('/aguacate.jpg');
+    if (logoData) doc.addImage(logoData, 'JPEG', logoX, logoY - 2, logoW, logoH);
+
+    const titleLeft = logoX + logoW + gap;
+    const titleRight = boxX - gap;
+    const titleCenterX = (titleLeft + titleRight) / 2;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('Aguacates Ramírez', titleCenterX, 22, { align: 'center' });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text('Registro SAGARPA: EMP0416058459/2021', titleCenterX, 28, { align: 'center' });
+    doc.text(
+      'Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro',
+      titleCenterX,
+      34,
+      { align: 'center' }
+    );
+
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.setTextColor(46, 125, 50);
-    doc.text(`Tipo: ${tituloGrupo}`, margin, y + 5);
-    doc.setTextColor(0);
+    doc.text('Nota de Compra', boxX, boxY - 2);
+    doc.setDrawColor(0);
+    doc.rect(boxX, boxY, boxW, boxH);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text('Folio:', boxX + 3, boxY + 6);
+    doc.setFont('helvetica', 'bold');
+    doc.text(fmtFolio(venta.numero_nota), boxX + 24, boxY + 6);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Fecha: ${fmtFecha(venta.fecha)}`, boxX + 3, boxY + 12);
+
+    // Datos cliente
+    let y = Math.max(logoY + logoH + 12, boxY + boxH + 12);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text('Datos del cliente', margin, y);
+    y += 10;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(`Cliente: ${venta.nombre_cliente}`, margin, y);
     y += 10;
 
-    // Tabla
-    autoTable(doc, {
-      startY: y,
-      head: [['Cajas', 'Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
-      body: items.map((p) => {
+    // Tarjeta de recibidos
+    const panelW = 72;
+    const panelH = 28;
+    const panelX = pageW - margin - panelW;
+    const panelY = y - 10;
+
+    doc.setDrawColor(46, 125, 50);
+    doc.setLineWidth(0.4);
+    doc.rect(panelX, panelY, panelW, panelH);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('Kilos recibidos', panelX + 20, panelY + 9);
+    doc.text('Cajas recibidas', panelX + 20, panelY + 20);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text((panelKg || 0).toLocaleString(), panelX + 52, panelY + 9, {
+      align: 'right',
+    });
+    doc.text((panelCajas || 0).toLocaleString(), panelX + 52, panelY + 20, {
+      align: 'right',
+    });
+
+    const boxIcon = await loadImageAsDataURL('/icons/box.jpg');
+    const kgIcon = await loadImageAsDataURL('/icons/kg.png');
+
+    if (kgIcon) doc.addImage(kgIcon, 'PNG', panelX + 5, panelY + 2, 12, 12);
+    if (boxIcon) doc.addImage(boxIcon, 'JPG', panelX + 5, panelY + 13, 12, 12);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    const infoY = panelY + panelH + 8;
+    doc.text(
+      `Kg clasificados: ${(kilosClasificados || 0).toLocaleString()}   ` +
+        `Cajas clasificadas: ${(cajasClasificadas || 0).toLocaleString()}`,
+      margin,
+      infoY
+    );
+
+    y = infoY + 6;
+
+    // Detalle por tipo
+    const grupos = {};
+    (productos || []).forEach((p) => {
+      const claveGrupo = getTipoKeyFromProducto(p);
+      if (!grupos[claveGrupo]) grupos[claveGrupo] = [];
+      grupos[claveGrupo].push(p);
+    });
+
+    let totalGeneralKg = 0;
+    let totalGeneralImporte = 0;
+    let totalGeneralCajas = 0;
+
+    for (const tituloGrupo in grupos) {
+      const items = grupos[tituloGrupo];
+
+      let subtotalKg = 0;
+      let subtotalImporte = 0;
+      let subtotalCajas = 0;
+
+      items.forEach((p) => {
         const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
         const cajas = Number(p.cajas ?? 0) || 0;
         const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
         const importe = Number(p.importe ?? kg * precio) || 0;
-        const descripcion = String(
-          p.descripcion ?? p.calibre ?? p.tipo ?? '-'
-        );
-        return [
-          cajas ? cajas.toString() : '',
-          kg.toFixed(0),
-          descripcion,
-          money(precio),
-          money(importe),
-        ];
-      }),
-      styles: { fontSize: 10, cellPadding: 2 },
-      headStyles: { fillColor: [46, 125, 50], textColor: 255 },
-      alternateRowStyles: { fillColor: [238, 245, 238] },
-      columnStyles: {
-        0: { halign: 'right', cellWidth: 18 }, // Cajas
-        1: { halign: 'right', cellWidth: 25 }, // Kg
-        2: { cellWidth: 'auto' },              // Descripción
-        3: { halign: 'right', cellWidth: 30 }, // Precio
-        4: { halign: 'right', cellWidth: 30 }, // Importe
-      },
-      theme: 'striped',
-      margin: { left: margin, right: margin },
-    });
 
-    y = doc.lastAutoTable.finalY + 6;
+        subtotalKg += kg;
+        subtotalCajas += cajas;
+        subtotalImporte += importe;
+      });
+
+      if ((!subtotalCajas || subtotalCajas === 0) && cajasPorTipo[tituloGrupo] != null) {
+        subtotalCajas = cajasPorTipo[tituloGrupo];
+      }
+
+      totalGeneralKg += subtotalKg;
+      totalGeneralCajas += subtotalCajas;
+      totalGeneralImporte += subtotalImporte;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(46, 125, 50);
+      doc.text(`Tipo: ${tituloGrupo}`, margin, y + 5);
+      doc.setTextColor(0);
+      y += 10;
+
+      autoTable(doc, {
+        startY: y,
+        head: [['Cajas', 'Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
+        body: items.map((p) => {
+          const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
+          const cajas = Number(p.cajas ?? 0) || 0;
+          const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
+          const importe = Number(p.importe ?? kg * precio) || 0;
+          const descripcion = String(
+            p.descripcion ?? p.calibre ?? p.tipo ?? '-'
+          );
+          return [
+            cajas ? cajas.toString() : '',
+            kg.toFixed(0),
+            descripcion,
+            money(precio),
+            money(importe),
+          ];
+        }),
+        styles: { fontSize: 10, cellPadding: 2 },
+        headStyles: { fillColor: [46, 125, 50], textColor: 255 },
+        alternateRowStyles: { fillColor: [238, 245, 238] },
+        columnStyles: {
+          0: { halign: 'right', cellWidth: 18 },
+          1: { halign: 'right', cellWidth: 25 },
+          2: { cellWidth: 'auto' },
+          3: { halign: 'right', cellWidth: 30 },
+          4: { halign: 'right', cellWidth: 30 },
+        },
+        theme: 'striped',
+        margin: { left: margin, right: margin },
+      });
+
+      y = doc.lastAutoTable.finalY + 6;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text(
+        `Subtotal ${tituloGrupo}: ${subtotalCajas.toLocaleString()} cajas, ${subtotalKg.toLocaleString()} kg — ${money(
+          subtotalImporte
+        )}`,
+        pageW - margin,
+        y,
+        { align: 'right' }
+      );
+      y += 10;
+    }
+
+    const anticipo = parseFloat(venta.anticipo || 0);
+    const saldo = totalGeneralImporte - anticipo;
+
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
+    doc.setFontSize(12);
     doc.text(
-      `Subtotal ${tituloGrupo}: ${subtotalCajas.toLocaleString()} cajas, ${subtotalKg.toLocaleString()} kg — ${money(
-        subtotalImporte
-      )}`,
+      `Total General: ${money(totalGeneralImporte)}`,
       pageW - margin,
-      y,
+      y + 4,
       { align: 'right' }
     );
-    y += 10;
-  }
 
-  // Totales finales de dinero
-  const anticipo = parseFloat(venta.anticipo || 0);
-  const saldo = totalGeneralImporte - anticipo;
+    if (anticipo > 0) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.text(`Anticipo: ${money(anticipo)}`, pageW - margin, y + 10, {
+        align: 'right',
+      });
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, y + 16, {
+        align: 'right',
+      });
+    }
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
-  doc.text(
-    `Total General: ${money(totalGeneralImporte)}`,
-    pageW - margin,
-    y + 4,
-    { align: 'right' }
-  );
+    const pageCount = doc.getNumberOfPages();
+    const fechaHoy = fmtFecha(new Date());
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.text(
+        `Documento generado automáticamente por el sistema EMPAQUE RAMÍREZ — ${fechaHoy}`,
+        margin,
+        pageH - 8
+      );
+      doc.text(`Página ${i} de ${pageCount}`, pageW - margin, pageH - 8, {
+        align: 'right',
+      });
+    }
 
-  if (anticipo > 0) {
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(11);
-    doc.text(`Anticipo: ${money(anticipo)}`, pageW - margin, y + 10, {
-      align: 'right',
-    });
-    doc.setFont('helvetica', 'bold');
-    doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, y + 16, {
-      align: 'right',
-    });
-  }
+    doc.save(`nota_compra_${fmtFolio(venta.numero_nota)}.pdf`);
 
-  // Footer
-  const pageCount = doc.getNumberOfPages();
-  const fechaHoy = fmtFecha(new Date());
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.text(
-      `Documento generado automáticamente por el sistema EMPAQUE RAMÍREZ — ${fechaHoy}`,
-      margin,
-      pageH - 8
-    );
-    doc.text(`Página ${i} de ${pageCount}`, pageW - margin, pageH - 8, {
-      align: 'right',
-    });
-  }
+    // Marcar como revisada
+    try {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      const email = userData?.user?.email;
+      if (!userError && email && venta.id != null) {
+        const { error: upsertError } = await supabase
+          .from('ventas_revision')
+          .upsert(
+            {
+              venta_id: venta.id,
+              user_email: email,
+              revisada: true,
+            },
+            { onConflict: 'venta_id,user_email' }
+          );
+        if (upsertError) {
+          console.warn('Error marcando venta revisada:', upsertError.message);
+        } else {
+          setVentasRevisadas((prev) => ({
+            ...prev,
+            [venta.id]: true,
+          }));
+          setRevisoresPorVenta((prev) => {
+            const arr = prev[venta.id] ? [...prev[venta.id]] : [];
+            if (!arr.includes(email)) arr.push(email);
+            return { ...prev, [venta.id]: arr };
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Error general marcando venta revisada:', e);
+    }
+  };
 
-  doc.save(`nota_compra_${fmtFolio(venta.numero_nota)}.pdf`);
-};
-
-
-
-
-
-  // ===== Rango por DÍA =====
-  // Utilidad para sumar días a un 'YYYY-MM-DD' SIN tocar timezones
+  // Rango por día
   function addDaysStr(ymd, days) {
     const [y, m, d] = ymd.split('-').map(Number);
-    const dt = new Date(y, m - 1, d + days); // local
+    const dt = new Date(y, m - 1, d + days);
     const yyyy = dt.getFullYear();
     const mm   = String(dt.getMonth() + 1).padStart(2, '0');
     const dd   = String(dt.getDate()).padStart(2, '0');
@@ -475,18 +500,63 @@ async function loadImageForJsPDF(url) {
   }
 
   const rango = useMemo(() => {
-    // Para columnas DATE (ventas.fecha, clasificacion.fecha)
     const desdeFecha = fecha;
     const hastaFecha = addDaysStr(fecha, 1);
-
-    // Para columnas TIMESTAMP (recepciones.fecha_hora) — local SIN 'Z'
     const desdeTS = `${desdeFecha} 00:00:00`;
     const hastaTS = `${hastaFecha} 00:00:00`;
-
     return { desdeFecha, hastaFecha, desdeTS, hastaTS };
   }, [fecha]);
 
-  // ===== Carga de datos =====
+  // Cargar revisadas + revisores por venta
+  const cargarRevisadas = async (ventasArr) => {
+    try {
+      if (!ventasArr || ventasArr.length === 0) {
+        setVentasRevisadas({});
+        setRevisoresPorVenta({});
+        return;
+      }
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      const currentEmail = userData?.user?.email || null;
+
+      const ids = ventasArr.map((v) => v.id);
+      const { data: revData, error: revError } = await supabase
+        .from('ventas_revision')
+        .select('venta_id, user_email')
+        .in('venta_id', ids);
+
+      if (revError) {
+        console.warn('Error cargando ventas_revision:', revError.message);
+        setVentasRevisadas({});
+        setRevisoresPorVenta({});
+        return;
+      }
+
+      const revisadasMap = {};
+      const revisoresMap = {};
+
+      (revData || []).forEach((r) => {
+        if (!revisoresMap[r.venta_id]) revisoresMap[r.venta_id] = new Set();
+        if (r.user_email) revisoresMap[r.venta_id].add(r.user_email);
+        if (currentEmail && r.user_email === currentEmail) {
+          revisadasMap[r.venta_id] = true;
+        }
+      });
+
+      const finalRevisores = {};
+      Object.entries(revisoresMap).forEach(([ventaId, set]) => {
+        finalRevisores[ventaId] = Array.from(set);
+      });
+
+      setVentasRevisadas(revisadasMap);
+      setRevisoresPorVenta(finalRevisores);
+    } catch (e) {
+      console.warn('Error general cargando revisadas:', e);
+      setVentasRevisadas({});
+      setRevisoresPorVenta({});
+    }
+  };
+
+  // Carga de datos según tab/día
   useEffect(() => {
     const load = async () => {
       setMensaje('');
@@ -499,7 +569,11 @@ async function loadImageForJsPDF(url) {
           .lt('fecha', rango.hastaFecha)
           .order('fecha', { ascending: false });
         if (error) setMensaje('❌ Error cargando ventas: ' + error.message);
-        else setVentas(data || []);
+        else {
+          const arr = data || [];
+          setVentas(arr);
+          await cargarRevisadas(arr);
+        }
       }
 
       if (tab === 'recepciones') {
@@ -527,7 +601,6 @@ async function loadImageForJsPDF(url) {
     load();
   }, [tab, rango]);
 
-  // ===== Edición / borrado =====
   const startEdit = (tabla, row) => setEdit({ tabla, id: row.id, data: { ...row } });
   const cancelEdit = () => setEdit({ tabla: null, id: null, data: {} });
 
@@ -542,7 +615,6 @@ async function loadImageForJsPDF(url) {
     setMensaje('✅ Cambios guardados.');
     cancelEdit();
 
-    // recargar pestaña actual
     if (tabla === 'ventas') {
       const { data } = await supabase
         .from('ventas')
@@ -550,7 +622,9 @@ async function loadImageForJsPDF(url) {
         .gte('fecha', rango.desdeFecha)
         .lt('fecha', rango.hastaFecha)
         .order('fecha', { ascending: false });
-      setVentas(data || []);
+      const arr = data || [];
+      setVentas(arr);
+      await cargarRevisadas(arr);
     }
     if (tabla === 'recepciones') {
       const { data } = await supabase
@@ -598,7 +672,6 @@ async function loadImageForJsPDF(url) {
     transition: 'background 0.15s ease',
   });
 
-  // ===== AGRUPADOS =====
   const gruposRecep = useMemo(() => {
     const map = new Map();
     for (const r of recepciones) {
@@ -650,7 +723,7 @@ async function loadImageForJsPDF(url) {
   const [openGroup, setOpenGroup] = useState({});
   const toggleGroup = (k) => setOpenGroup((o) => ({ ...o, [k]: !o[k] }));
 
-  // ===== EXCEL =====
+  // EXCEL helpers
   function splitVentas(ventasArr = []) {
     const ventasOut = [];
     const detalleOut = [];
@@ -771,6 +844,24 @@ async function loadImageForJsPDF(url) {
     }
   };
 
+  const fetchAll = async (table, select = '*') => {
+    const pageSize = 1000;
+    let from = 0;
+    let to = pageSize - 1;
+    const all = [];
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { data, error } = await supabase.from(table).select(select).range(from, to).order('id', { ascending: true });
+      if (error) throw error;
+      if (!data || data.length === 0) break;
+      all.push(...data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+      to += pageSize;
+    }
+    return all;
+  };
+
   const exportarExcelTodo = async () => {
     if (!window.confirm('Esto exportará TODO el histórico. ¿Continuar?')) return;
     try {
@@ -787,27 +878,6 @@ async function loadImageForJsPDF(url) {
       setMensaje('❌ Error exportando TODO: ' + (err?.message || err));
     }
   };
-
-  async function fetchAll(table, select = '*') {
-    const pageSize = 1000;
-    let from = 0;
-    let to = pageSize - 1;
-    const all = [];
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const { data, error } = await supabase.from(table).select(select).range(from, to).order('id', { ascending: true });
-
-      if (error) throw error;
-      if (!data || data.length === 0) break;
-
-      all.push(...data);
-      if (data.length < pageSize) break;
-
-      from += pageSize;
-      to += pageSize;
-    }
-    return all;
-  }
 
   return (
     <div style={{ padding: '2rem', maxWidth: 1200, margin: '0 auto', fontFamily: 'Arial' }}>
@@ -854,81 +924,184 @@ async function loadImageForJsPDF(url) {
       </div>
 
       {mensaje && (
-        <p style={{ textAlign: 'center', color: mensaje.includes('❌') ? 'crimson' : 'green', marginTop: 10 }}>{mensaje}</p>
+        <p style={{ textAlign: 'center', color: mensaje.includes('❌') ? 'crimson' : 'green', marginTop: 10 }}>
+          {mensaje}
+        </p>
       )}
 
-      {/* VENTAS (Compras) */}
+      {/* COMPRAS */}
       {tab === 'ventas' && (
-        <div style={tableCard}>
-          <div style={tableScroll}>
-            <table style={tbl}>
-              <thead>
-                <tr>
-                  <th style={th}>Folio</th>
-                  <th style={th}>Fecha</th>
-                  <th style={th}>Cliente</th>
-                  <th style={th}>Anticipo</th>
-                  <th style={th}>Total</th>
-                  <th style={th}>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ventas.map((v, i) => {
-                  const editing = edit.tabla === 'ventas' && edit.id === v.id;
-                  const row = editing ? edit.data : v;
-                  const hovered = hoverRow === i;
-                  const moneyFmt = (n) =>
-                    new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(n || 0));
+        <>
+          {/* Tabla de PENDIENTES */}
+          <div style={tableCard}>
+            <div style={tableScroll}>
+              <table style={tbl}>
+                <thead>
+                  <tr>
+                    <th style={th}>Folio</th>
+                    <th style={th}>Fecha</th>
+                    <th style={th}>Cliente</th>
+                    <th style={th}>Anticipo</th>
+                    <th style={th}>Total</th>
+                    <th style={th}>Estado</th>
+                    <th style={th}>Revisó</th>
+                    <th style={th}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ventasPendientes.map((v, i) => {
+                    const editing = edit.tabla === 'ventas' && edit.id === v.id;
+                    const row = editing ? edit.data : v;
+                    const hovered = hoverRow === i;
 
-                  return (
-                    <tr
-                      key={v.id}
-                      style={rowStyle(i, hovered)}
-                      onMouseEnter={() => setHoverRow(i)}
-                      onMouseLeave={() => setHoverRow(null)}
-                    >
-                      <td style={td}>{fmtFolio(v.numero_nota)}</td>
-                      <td style={td}>{fmtFecha(v.fecha)}</td>
-                      <td style={td}>
-                        {editing ? (
-                          <Field value={row.nombre_cliente} onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, nombre_cliente: val } }))} />
-                        ) : (
-                          v.nombre_cliente
-                        )}
-                      </td>
-                      <td style={{ ...td, textAlign: 'right' }}>{moneyFmt(v.anticipo || 0)}</td>
-                      <td style={{ ...td, textAlign: 'right' }}>{moneyFmt(v.total || 0)}</td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {editing ? (
-                          <>
-                            <button onClick={saveEdit} style={btnGuardar}>
-                              💾
-                            </button>
-                            <button onClick={cancelEdit} style={btnCancelar}>
-                              ✖
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button onClick={async () => await descargarPDF(v)} style={btnPDF}>
-                              📄 PDF
-                            </button>
-                            <button onClick={() => startEdit('ventas', v)} style={btnEditar}>
-                              ✏️
-                            </button>
-                            <button onClick={() => removeRow('ventas', v.id)} style={btnEliminar}>
-                              🗑️
-                            </button>
-                          </>
-                        )}
+                    return (
+                      <tr
+                        key={v.id}
+                        style={rowStyle(i, hovered)}
+                        onMouseEnter={() => setHoverRow(i)}
+                        onMouseLeave={() => setHoverRow(null)}
+                      >
+                        <td style={td}>{fmtFolio(v.numero_nota)}</td>
+                        <td style={td}>{fmtFecha(v.fecha)}</td>
+                        <td style={td}>
+                          {editing ? (
+                            <Field
+                              value={row.nombre_cliente}
+                              onChange={(val) =>
+                                setEdit((e) => ({ ...e, data: { ...e.data, nombre_cliente: val } }))
+                              }
+                            />
+                          ) : (
+                            v.nombre_cliente
+                          )}
+                        </td>
+                        <td style={{ ...td, textAlign: 'right' }}>{money(v.anticipo || 0)}</td>
+                        <td style={{ ...td, textAlign: 'right' }}>{money(v.total || 0)}</td>
+
+                        {/* Estado para usuario actual */}
+                        <td style={td}>
+                          <span
+                            style={{
+                              padding: '0.15rem 0.5rem',
+                              borderRadius: '999px',
+                              fontSize: '0.75rem',
+                              color: '#fff',
+                              backgroundColor: ventasRevisadas[v.id] ? '#2e7d32' : '#f9a825',
+                            }}
+                          >
+                            {ventasRevisadas[v.id] ? 'Revisada' : 'Pendiente'}
+                          </span>
+                        </td>
+
+                        {/* Quién la revisó (todos los correos) */}
+                        <td style={{ ...td, fontSize: '0.8rem', color: '#555' }}>
+                          {revisoresPorVenta[v.id] && revisoresPorVenta[v.id].length
+                            ? revisoresPorVenta[v.id].join(', ')
+                            : '—'}
+                        </td>
+
+                        <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                          {editing ? (
+                            <>
+                              <button onClick={saveEdit} style={btnGuardar}>
+                                💾
+                              </button>
+                              <button onClick={cancelEdit} style={btnCancelar}>
+                                ✖
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={async () => await descargarPDF(v)} style={btnPDF}>
+                                📄 PDF
+                              </button>
+                              <button onClick={() => startEdit('ventas', v)} style={btnEditar}>
+                                ✏️
+                              </button>
+                              <button onClick={() => removeRow('ventas', v.id)} style={btnEliminar}>
+                                🗑️
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {ventasPendientes.length === 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ ...td, textAlign: 'center', color: '#777' }}>
+                        No hay notas pendientes para este día.
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+
+          {/* Tarjetas de REVISADAS */}
+          {ventasRevisadasSolo.length > 0 && (
+            <div style={{ marginTop: 24 }}>
+              <h3 style={{ margin: '0 0 4px', color: '#2e7d32' }}>Notas revisadas</h3>
+              <p style={{ margin: '0 0 12px', fontSize: '0.9rem', color: '#555' }}>
+                Estas notas ya fueron revisadas al menos por un usuario.
+              </p>
+
+              <div style={cardsGrid}>
+                {ventasRevisadasSolo.map((v) => (
+                  <div key={v.id} style={cardRevisada}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span style={chipFolio}>Folio {fmtFolio(v.numero_nota)}</span>
+                      <span style={chipEstadoRevisada}>Revisada</span>
+                    </div>
+                    <div style={{ fontWeight: 'bold', marginBottom: 2 }}>{v.nombre_cliente}</div>
+                    <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: 6 }}>
+                      {fmtFecha(v.fecha)}
+                    </div>
+                    <div style={{ fontSize: '0.9rem', marginBottom: 4 }}>
+                      Total:{' '}
+                      <strong>
+                        {money(v.total || 0)}
+                      </strong>
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#777', minHeight: 18 }}>
+                      {revisoresPorVenta[v.id] && revisoresPorVenta[v.id].length
+                        ? `Revisó: ${revisoresPorVenta[v.id].join(', ')}`
+                        : 'Revisado (sin correo registrado)'}
+                    </div>
+<div
+  style={{
+    marginTop: 8,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  }}
+>
+  <button
+    onClick={() => removeRow('ventas', v.id)}
+    style={btnCardDelete}
+  >
+    🗑️ Eliminar
+  </button>
+
+  <button onClick={() => descargarPDF(v)} style={btnCardPDF}>
+    📄 Ver PDF
+  </button>
+</div>
+
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* RECEPCIONES */}
@@ -951,7 +1124,9 @@ async function loadImageForJsPDF(url) {
                 {gruposRecep.map((g) => (
                   <React.Fragment key={g.key}>
                     <tr style={groupRow} onClick={() => toggleGroup(g.key)}>
-                      <td style={{ ...td, width: 28, textAlign: 'center', cursor: 'pointer' }}>{openGroup[g.key] ? '▾' : '▸'}</td>
+                      <td style={{ ...td, width: 28, textAlign: 'center', cursor: 'pointer' }}>
+                        {openGroup[g.key] ? '▾' : '▸'}
+                      </td>
                       <td style={{ ...td, fontWeight: 600 }}>{new Date(g.fecha_hora).toLocaleString()}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{g.cliente_nombre}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{g.total_kilos}</td>
@@ -975,7 +1150,9 @@ async function loadImageForJsPDF(url) {
                                 <Field
                                   type="datetime-local"
                                   value={row.fecha_hora?.slice(0, 16) ?? ''}
-                                  onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, fecha_hora: val } }))}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({ ...e, data: { ...e.data, fecha_hora: val } }))
+                                  }
                                 />
                               ) : (
                                 new Date(r.fecha_hora).toLocaleString()
@@ -983,7 +1160,12 @@ async function loadImageForJsPDF(url) {
                             </td>
                             <td style={td}>
                               {editing ? (
-                                <Field value={row.cliente_nombre} onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, cliente_nombre: val } }))} />
+                                <Field
+                                  value={row.cliente_nombre}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({ ...e, data: { ...e.data, cliente_nombre: val } }))
+                                  }
+                                />
                               ) : (
                                 r.cliente_nombre
                               )}
@@ -993,7 +1175,12 @@ async function loadImageForJsPDF(url) {
                                 <Field
                                   type="number"
                                   value={row.kilos ?? ''}
-                                  onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, kilos: parseFloat(val) || null } }))}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({
+                                      ...e,
+                                      data: { ...e.data, kilos: parseFloat(val) || null },
+                                    }))
+                                  }
                                 />
                               ) : (
                                 r.kilos
@@ -1001,7 +1188,12 @@ async function loadImageForJsPDF(url) {
                             </td>
                             <td style={td}>
                               {editing ? (
-                                <Field value={row.tipo ?? ''} onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, tipo: val } }))} />
+                                <Field
+                                  value={row.tipo ?? ''}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({ ...e, data: { ...e.data, tipo: val } }))
+                                  }
+                                />
                               ) : (
                                 r.tipo
                               )}
@@ -1010,7 +1202,12 @@ async function loadImageForJsPDF(url) {
                               {editing ? (
                                 <Field
                                   value={row.telefono_cliente ?? ''}
-                                  onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, telefono_cliente: val } }))}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({
+                                      ...e,
+                                      data: { ...e.data, telefono_cliente: val },
+                                    }))
+                                  }
                                 />
                               ) : (
                                 r.telefono_cliente || '-'
@@ -1068,7 +1265,9 @@ async function loadImageForJsPDF(url) {
                 {gruposClas.map((g) => (
                   <React.Fragment key={g.key}>
                     <tr style={groupRow} onClick={() => toggleGroup(g.key)}>
-                      <td style={{ ...td, width: 28, textAlign: 'center', cursor: 'pointer' }}>{openGroup[g.key] ? '▾' : '▸'}</td>
+                      <td style={{ ...td, width: 28, textAlign: 'center', cursor: 'pointer' }}>
+                        {openGroup[g.key] ? '▾' : '▸'}
+                      </td>
                       <td style={{ ...td, fontWeight: 600 }}>{fmtFecha(g.fecha)}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{g.cliente_nombre}</td>
                       <td style={{ ...td, color: '#555' }}>
@@ -1090,21 +1289,40 @@ async function loadImageForJsPDF(url) {
                             <td style={{ ...td, textAlign: 'center', color: '#777' }}>•</td>
                             <td style={td}>
                               {editing ? (
-                                <Field type="date" value={row.fecha} onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, fecha: val } }))} />
+                                <Field
+                                  type="date"
+                                  value={row.fecha}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({ ...e, data: { ...e.data, fecha: val } }))
+                                  }
+                                />
                               ) : (
                                 fmtFecha(c.fecha)
                               )}
                             </td>
                             <td style={td}>
                               {editing ? (
-                                <Field value={row.cliente_nombre} onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, cliente_nombre: val } }))} />
+                                <Field
+                                  value={row.cliente_nombre}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({
+                                      ...e,
+                                      data: { ...e.data, cliente_nombre: val },
+                                    }))
+                                  }
+                                />
                               ) : (
                                 c.cliente_nombre
                               )}
                             </td>
                             <td style={td}>
                               {editing ? (
-                                <Field value={row.calibre ?? ''} onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, calibre: val } }))} />
+                                <Field
+                                  value={row.calibre ?? ''}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({ ...e, data: { ...e.data, calibre: val } }))
+                                  }
+                                />
                               ) : (
                                 c.calibre || '-'
                               )}
@@ -1114,7 +1332,12 @@ async function loadImageForJsPDF(url) {
                                 <Field
                                   type="number"
                                   value={row.cajas ?? ''}
-                                  onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, cajas: parseInt(val || '0', 10) } }))}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({
+                                      ...e,
+                                      data: { ...e.data, cajas: parseInt(val || '0', 10) },
+                                    }))
+                                  }
                                 />
                               ) : (
                                 c.cajas
@@ -1125,7 +1348,9 @@ async function loadImageForJsPDF(url) {
                                 <Field
                                   type="number"
                                   value={row.kg ?? ''}
-                                  onChange={(val) => setEdit((e) => ({ ...e, data: { ...e.data, kg: parseFloat(val) || 0 } }))}
+                                  onChange={(val) =>
+                                    setEdit((e) => ({ ...e, data: { ...e.data, kg: parseFloat(val) || 0 } }))
+                                  }
                                 />
                               ) : (
                                 c.kg
@@ -1202,3 +1427,54 @@ const tabBtn = (active) => ({
   borderRadius: 8,
   cursor: 'pointer',
 });
+
+/* grid de tarjetas revisadas */
+const cardsGrid = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+  gap: '12px',
+};
+
+const cardRevisada = {
+  border: '1px solid #dcedc8',
+  borderRadius: 8,
+  padding: '10px 12px',
+  background: '#f9fff4',
+  boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+};
+
+const chipFolio = {
+  fontSize: '0.8rem',
+  background: '#e0f2f1',
+  padding: '2px 8px',
+  borderRadius: 999,
+  color: '#006064',
+};
+
+const chipEstadoRevisada = {
+  fontSize: '0.75rem',
+  background: '#2e7d32',
+  color: '#fff',
+  padding: '2px 8px',
+  borderRadius: 999,
+};
+
+const btnCardPDF = {
+  padding: '0.25rem 0.6rem',
+  background: '#2e7d32',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 4,
+  cursor: 'pointer',
+  fontSize: '0.8rem',
+};
+
+const btnCardDelete = {
+  padding: '0.25rem 0.6rem',
+  background: '#c62828',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 4,
+  cursor: 'pointer',
+  fontSize: '0.8rem',
+};
