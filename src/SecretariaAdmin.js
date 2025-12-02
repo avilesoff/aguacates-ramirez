@@ -32,6 +32,7 @@ export default function SecretariaAdmin() {
   const [ventasRevisadas, setVentasRevisadas] = useState({});
   // lista de correos que han revisado cada venta (venta_id -> [email,...])
   const [revisoresPorVenta, setRevisoresPorVenta] = useState({});
+const [mostrarRevisadas, setMostrarRevisadas] = useState(false);
 
   // 👉 Separar ventas en PENDIENTES y REVISADAS (ordenadas por fecha desc.)
   const ventasPendientes = useMemo(
@@ -296,12 +297,19 @@ export default function SecretariaAdmin() {
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
-    doc.text((panelKg || 0).toLocaleString(), panelX + 52, panelY + 9, {
-      align: 'right',
-    });
-    doc.text((panelCajas || 0).toLocaleString(), panelX + 52, panelY + 20, {
-      align: 'right',
-    });
+    doc.text(
+  (panelKg || 0).toLocaleString(),
+  panelX + panelW - 4,
+  panelY + 9,
+  { align: 'right' }
+);
+doc.text(
+  (panelCajas || 0).toLocaleString(),
+  panelX + panelW - 4,
+  panelY + 20,
+  { align: 'right' }
+);
+
 
     const boxIcon = await loadImageAsDataURL('/icons/box.jpg');
     const kgIcon = await loadImageAsDataURL('/icons/kg.png');
@@ -309,17 +317,8 @@ export default function SecretariaAdmin() {
     if (kgIcon) doc.addImage(kgIcon, 'PNG', panelX + 5, panelY + 2, 12, 12);
     if (boxIcon) doc.addImage(boxIcon, 'JPG', panelX + 5, panelY + 13, 12, 12);
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    const infoY = panelY + panelH + 8;
-    doc.text(
-      `Kg clasificados: ${(kilosClasificados || 0).toLocaleString()}   ` +
-        `Cajas clasificadas: ${(cajasClasificadas || 0).toLocaleString()}`,
-      margin,
-      infoY
-    );
+y = panelY + panelH + 10;
 
-    y = infoY + 6;
 
     // Detalle por tipo
     const grupos = {};
@@ -359,58 +358,69 @@ export default function SecretariaAdmin() {
       totalGeneralCajas += subtotalCajas;
       totalGeneralImporte += subtotalImporte;
 
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(46, 125, 50);
-      doc.text(`Tipo: ${tituloGrupo}`, margin, y + 5);
-      doc.setTextColor(0);
-      y += 10;
+     // Título del tipo
+doc.setFont('helvetica', 'bold');
+doc.setFontSize(11);
+doc.setTextColor(46, 125, 50);
+doc.text(`Tipo: ${tituloGrupo}`, margin, y + 5);
+doc.setTextColor(0);
 
-      autoTable(doc, {
-        startY: y,
-        head: [['Cajas', 'Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
-        body: items.map((p) => {
-          const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
-          const cajas = Number(p.cajas ?? 0) || 0;
-          const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
-          const importe = Number(p.importe ?? kg * precio) || 0;
-          const descripcion = String(
-            p.descripcion ?? p.calibre ?? p.tipo ?? '-'
-          );
-          return [
-            cajas ? cajas.toString() : '',
-            kg.toFixed(0),
-            descripcion,
-            money(precio),
-            money(importe),
-          ];
-        }),
-        styles: { fontSize: 10, cellPadding: 2 },
-        headStyles: { fillColor: [46, 125, 50], textColor: 255 },
-        alternateRowStyles: { fillColor: [238, 245, 238] },
-        columnStyles: {
-          0: { halign: 'right', cellWidth: 18 },
-          1: { halign: 'right', cellWidth: 25 },
-          2: { cellWidth: 'auto' },
-          3: { halign: 'right', cellWidth: 30 },
-          4: { halign: 'right', cellWidth: 30 },
-        },
-        theme: 'striped',
-        margin: { left: margin, right: margin },
-      });
+// Resumen de cajas y kilos ARRIBA de la tabla
+doc.setFont('helvetica', 'bold');
+doc.setFontSize(10);
+doc.text(
+  `Cajas: ${subtotalCajas.toLocaleString()}   Kilos: ${subtotalKg.toLocaleString()}`,
+  pageW - margin,
+  y + 5,
+  { align: 'right' }
+);
 
-      y = doc.lastAutoTable.finalY + 6;
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.text(
-        `Subtotal ${tituloGrupo}: ${subtotalCajas.toLocaleString()} cajas, ${subtotalKg.toLocaleString()} kg — ${money(
-          subtotalImporte
-        )}`,
-        pageW - margin,
-        y,
-        { align: 'right' }
-      );
-      y += 10;
+y += 10;
+
+// === TABLA (ya sin columna de cajas, ver cambio del punto 2) ===
+autoTable(doc, {
+  startY: y,
+  head: [['Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
+  body: items.map((p) => {
+    const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
+    const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
+    const importe = Number(p.importe ?? kg * precio) || 0;
+    const descripcion = String(
+      p.descripcion ?? p.calibre ?? p.tipo ?? '-'
+    );
+    return [
+      kg.toFixed(0),
+      descripcion,
+      money(precio),
+      money(importe),
+    ];
+  }),
+  styles: { fontSize: 10, cellPadding: 2 },
+  headStyles: { fillColor: [46, 125, 50], textColor: 255 },
+  alternateRowStyles: { fillColor: [238, 245, 238] },
+  columnStyles: {
+    0: { halign: 'right', cellWidth: 25 },
+    1: { cellWidth: 'auto' },
+    2: { halign: 'right', cellWidth: 30 },
+    3: { halign: 'right', cellWidth: 30 },
+  },
+  theme: 'striped',
+  margin: { left: margin, right: margin },
+});
+
+y = doc.lastAutoTable.finalY + 6;
+
+// Subtotal ABAJO: solo dinero
+doc.setFont('helvetica', 'bold');
+doc.setFontSize(10);
+doc.text(
+  `Subtotal ${tituloGrupo}: ${money(subtotalImporte)}`,
+  pageW - margin,
+  y,
+  { align: 'right' }
+);
+y += 10;
+
     }
 
     const anticipo = parseFloat(venta.anticipo || 0);
@@ -896,7 +906,7 @@ export default function SecretariaAdmin() {
           <button onClick={exportarExcelTodo} style={{ ...btnSecundario, backgroundColor: '#00695c' }}>
             📦 Exportar TODO
           </button>
-          <button onClick={() => navigate('/ventas')} style={{ ...btnSecundario, backgroundColor: '#455a64' }}>
+          <button onClick={() => navigate('/secretaria-flujo')} style={{ ...btnSecundario, backgroundColor: '#455a64' }}>
             ➕ Registrar compra
           </button>
           <button
@@ -1039,68 +1049,90 @@ export default function SecretariaAdmin() {
             </div>
           </div>
 
-          {/* Tarjetas de REVISADAS */}
-          {ventasRevisadasSolo.length > 0 && (
-            <div style={{ marginTop: 24 }}>
-              <h3 style={{ margin: '0 0 4px', color: '#2e7d32' }}>Notas revisadas</h3>
-              <p style={{ margin: '0 0 12px', fontSize: '0.9rem', color: '#555' }}>
-                Estas notas ya fueron revisadas al menos por un usuario.
-              </p>
+{/* Tarjetas de REVISADAS (colapsables) */}
+{ventasRevisadasSolo.length > 0 && (
+  <div style={{ marginTop: 24 }}>
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+      }}
+    >
+      <div>
+        <h3 style={{ margin: '0 0 4px', color: '#2e7d32' }}>Notas revisadas</h3>
+        <p style={{ margin: 0, fontSize: '0.85rem', color: '#555' }}>
+          {ventasRevisadasSolo.length} nota(s) revisada(s) para este día.
+        </p>
+      </div>
 
-              <div style={cardsGrid}>
-                {ventasRevisadasSolo.map((v) => (
-                  <div key={v.id} style={cardRevisada}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: 4,
-                      }}
-                    >
-                      <span style={chipFolio}>Folio {fmtFolio(v.numero_nota)}</span>
-                      <span style={chipEstadoRevisada}>Revisada</span>
-                    </div>
-                    <div style={{ fontWeight: 'bold', marginBottom: 2 }}>{v.nombre_cliente}</div>
-                    <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: 6 }}>
-                      {fmtFecha(v.fecha)}
-                    </div>
-                    <div style={{ fontSize: '0.9rem', marginBottom: 4 }}>
-                      Total:{' '}
-                      <strong>
-                        {money(v.total || 0)}
-                      </strong>
-                    </div>
-                    <div style={{ fontSize: '0.8rem', color: '#777', minHeight: 18 }}>
-                      {revisoresPorVenta[v.id] && revisoresPorVenta[v.id].length
-                        ? `Revisó: ${revisoresPorVenta[v.id].join(', ')}`
-                        : 'Revisado (sin correo registrado)'}
-                    </div>
-<div
-  style={{
-    marginTop: 8,
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  }}
->
-  <button
-    onClick={() => removeRow('ventas', v.id)}
-    style={btnCardDelete}
-  >
-    🗑️ Eliminar
-  </button>
+      <button
+        type="button"
+        onClick={() => setMostrarRevisadas((v) => !v)}
+        style={btnToggleRevisadas}
+      >
+        {mostrarRevisadas ? 'Ocultar notas revisadas' : 'Mostrar notas revisadas'}
+      </button>
+    </div>
 
-  <button onClick={() => descargarPDF(v)} style={btnCardPDF}>
-    📄 Ver PDF
-  </button>
-</div>
-
-                  </div>
-                ))}
-              </div>
+    {mostrarRevisadas && (
+      <div style={cardsGrid}>
+        {ventasRevisadasSolo.map((v) => (
+          <div key={v.id} style={cardRevisada}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 4,
+              }}
+            >
+              <span style={chipFolio}>Folio {fmtFolio(v.numero_nota)}</span>
+              <span style={chipEstadoRevisada}>Revisada</span>
             </div>
-          )}
+
+            <div style={{ fontWeight: 'bold', marginBottom: 2 }}>{v.nombre_cliente}</div>
+            <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: 6 }}>
+              {fmtFecha(v.fecha)}
+            </div>
+
+            <div style={{ fontSize: '0.9rem', marginBottom: 4 }}>
+              Total: <strong>{money(v.total || 0)}</strong>
+            </div>
+
+            <div style={{ fontSize: '0.8rem', color: '#777', minHeight: 18 }}>
+              {revisoresPorVenta[v.id] && revisoresPorVenta[v.id].length
+                ? `Revisó: ${revisoresPorVenta[v.id].join(', ')}`
+                : 'Revisado (sin correo registrado)'}
+            </div>
+
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <button
+                onClick={() => removeRow('ventas', v.id)}
+                style={btnCardDelete}
+              >
+                🗑️ Eliminar
+              </button>
+
+              <button onClick={() => descargarPDF(v)} style={btnCardPDF}>
+                📄 Ver PDF
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+)}
+
         </>
       )}
 
@@ -1419,6 +1451,15 @@ const btnEditar = { padding: '0.2rem 0.5rem', background: '#0288d1', color: '#ff
 const btnEliminar = { padding: '0.2rem 0.5rem', background: '#c62828', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' };
 const btnGuardar = { padding: '0.2rem 0.5rem', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', marginRight: 6 };
 const btnCancelar = { padding: '0.2rem 0.5rem', background: '#737373', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' };
+const btnToggleRevisadas = {
+  padding: '0.25rem 0.7rem',
+  background: '#eeeeee',
+  border: '1px solid #bdbdbd',
+  borderRadius: 999,
+  cursor: 'pointer',
+  fontSize: '0.8rem',
+};
+
 const tabBtn = (active) => ({
   padding: '0.5rem 0.9rem',
   background: active ? '#2e7d32' : '#e0e0e0',

@@ -1,10 +1,11 @@
+// src/Recepcion.js
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import Select from 'react-select';
 import Login from './Login';
 import { useNavigate } from 'react-router-dom';
 
-function App() {
+function App({ modoSecretaria = false, onEntregaCreada }) {
   const navigate = useNavigate();
 
   const [usuario, setUsuario] = useState(null);
@@ -29,12 +30,13 @@ function App() {
     'Desecho',
   ];
 
-  // Cargar usuario
+  // Cargar usuario (solo para modo normal)
   useEffect(() => {
+    if (modoSecretaria) return;
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUsuario(user);
     });
-  }, []);
+  }, [modoSecretaria]);
 
   // Función para cargar clientes únicos
   const cargarClientes = async () => {
@@ -61,7 +63,8 @@ function App() {
     cargarClientes();
   }, []);
 
-  if (!usuario) {
+  // Login solo en modo normal
+  if (!usuario && !modoSecretaria) {
     return <Login onLogin={(user) => setUsuario(user)} />;
   }
 
@@ -158,7 +161,7 @@ function App() {
     await cargarClientes();
   };
 
-  // Fecha local a mediodía con offset (evita saltos de día por zona horaria)
+  // Fecha local a mediodía con offset
   function localISOWithOffsetAtNoon(d = new Date()) {
     const yyyy = d.getFullYear();
     const MM = String(d.getMonth() + 1).padStart(2, '0');
@@ -189,7 +192,9 @@ function App() {
         (nombre) => nombre.toLowerCase() === nombreClienteFinal.toLowerCase()
       );
       if (yaExiste) {
-        setMensaje('❌ Este cliente ya está registrado. Selecciónalo desde la lista.');
+        setMensaje(
+          '❌ Este cliente ya está registrado. Selecciónalo desde la lista.'
+        );
         return;
       }
 
@@ -229,12 +234,32 @@ function App() {
       setMensaje('❌ Error al guardar: ' + error.message);
     } else {
       setMensaje('✅ Registros guardados correctamente.');
+
+      const totalKilosInsertados = registros.reduce(
+        (sum, r) => sum + (r.kilos || 0),
+        0
+      );
+      const totalCajasInsertadas = registros.reduce(
+        (sum, r) => sum + (r.cajas || 0),
+        0
+      );
+
+      if (onEntregaCreada) {
+        onEntregaCreada({
+          entregaId,
+          clienteNombre: nombreClienteFinal,
+          fecha: fechaHoraLocal,
+          kilos: totalKilosInsertados,
+          cajas: totalCajasInsertadas,
+        });
+      }
+
       setCliente('');
       setClienteNuevo('');
       setTelefonoNuevo('');
       setNombreEditado('');
       setLineas([{ tipo: '', kilos: '', cajas: '' }]);
-      await cargarClientes(); // por si se creó un cliente nuevo
+      await cargarClientes();
     }
   };
 
@@ -244,38 +269,30 @@ function App() {
   );
   const totalToneladas = (totalKilos / 1000).toFixed(2);
 
-  return (
+  // CARD PRINCIPAL
+  const card = (
     <div
       style={{
-        backgroundColor: '#f5f5f5',
-        minHeight: '100vh',
-        paddingTop: '2rem',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'flex-start',
-        fontFamily: 'Arial, sans-serif',
+        backgroundColor: '#fff',
+        padding: '2rem',
+        borderRadius: '10px',
+        boxShadow: '0 0 10px rgba(0,0,0,0.1)',
+        maxWidth: '600px',
+        width: '100%',
+        margin: '0 auto', // 👈 esto centra el card en su contenedor
       }}
     >
-      <div
-        style={{
-          backgroundColor: '#fff',
-          padding: '2rem',
-          borderRadius: '10px',
-          boxShadow: '0 0 10px rgba(0,0,0,0.1)',
-          maxWidth: '600px',
-          width: '100%',
-        }}
-      >
-        <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-          <img
-            src="/aguacate.jpg"
-            alt="Logo Aguacates Ramírez"
-            style={{ width: '80px', marginBottom: '1rem' }}
-          />
-          <h2 style={{ color: '#2e7d32' }}>Recepción de Aguacate</h2>
-        </div>
+      <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+        <img
+          src="/aguacate.jpg"
+          alt="Logo Aguacates Ramírez"
+          style={{ width: '80px', marginBottom: '1rem' }}
+        />
+        <h2 style={{ color: '#2e7d32' }}>Recepción de Aguacate</h2>
+      </div>
 
-        {/* botones superiores */}
+      {/* botones superiores (solo modo normal) */}
+      {!modoSecretaria && (
         <div
           style={{
             display: 'flex',
@@ -305,41 +322,77 @@ function App() {
             🔒 Cerrar sesión
           </button>
         </div>
+      )}
 
-        <form onSubmit={handleSubmit}>
-          <label>Nombre del cliente:</label>
-          <br />
-          <Select
-            options={[
-              ...clientesRegistrados.map((nombre) => ({
-                label: nombre,
-                value: nombre,
-              })),
-              { label: '➕ Nuevo cliente', value: '__nuevo__' },
-            ]}
-            value={
-              cliente
-                ? {
-                    label:
-                      cliente === '__nuevo__' ? '➕ Nuevo cliente' : cliente,
-                    value: cliente,
-                  }
-                : null
+      {/* FORMULARIO */}
+      <form onSubmit={handleSubmit}>
+        <label>Nombre del cliente:</label>
+        <br />
+        <Select
+          options={[
+            ...clientesRegistrados.map((nombre) => ({
+              label: nombre,
+              value: nombre,
+            })),
+            { label: '➕ Nuevo cliente', value: '__nuevo__' },
+          ]}
+          value={
+            cliente
+              ? {
+                  label: cliente === '__nuevo__' ? '➕ Nuevo cliente' : cliente,
+                  value: cliente,
+                }
+              : null
+          }
+          onChange={(opt) => {
+            const value = opt ? opt.value : '';
+            setCliente(value);
+            if (value && value !== '__nuevo__') {
+              setNombreEditado(value);
+            } else {
+              setNombreEditado('');
             }
-            onChange={(opt) => {
-              const value = opt ? opt.value : '';
-              setCliente(value);
-              if (value && value !== '__nuevo__') {
-                setNombreEditado(value);
-              } else {
-                setNombreEditado('');
-              }
-            }}
-            placeholder="Selecciona un cliente"
-            isSearchable
-          />
+          }}
+          placeholder="Selecciona un cliente"
+          isSearchable
+        />
 
-          {/* botones para eliminar / renombrar cliente */}
+        {/* botones para eliminar / renombrar cliente */}
+        <div
+          style={{
+            marginTop: '0.5rem',
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
+          <button
+            type="button"
+            onClick={handleEliminarCliente}
+            disabled={!cliente || cliente === '__nuevo__'}
+            style={{
+              padding: '0.35rem 0.7rem',
+              borderRadius: 6,
+              border: 'none',
+              fontSize: '0.8rem',
+              cursor:
+                !cliente || cliente === '__nuevo__'
+                  ? 'not-allowed'
+                  : 'pointer',
+              backgroundColor:
+                !cliente || cliente === '__nuevo__' ? '#ccc' : '#e53935',
+              color: '#fff',
+            }}
+          >
+            🗑 Eliminar cliente
+          </button>
+          <span style={{ fontSize: '0.8rem', color: '#555' }}>
+            Borra al cliente y sus recepciones.
+          </span>
+        </div>
+
+        {cliente && cliente !== '__nuevo__' && (
           <div
             style={{
               marginTop: '0.5rem',
@@ -349,241 +402,229 @@ function App() {
               flexWrap: 'wrap',
             }}
           >
+            <input
+              type="text"
+              value={nombreEditado}
+              onChange={(e) => setNombreEditado(e.target.value)}
+              style={{ ...inputEstilo, width: '60%' }}
+              placeholder="Nuevo nombre del cliente"
+            />
             <button
               type="button"
-              onClick={handleEliminarCliente}
-              disabled={!cliente || cliente === '__nuevo__'}
+              onClick={handleRenombrarCliente}
               style={{
                 padding: '0.35rem 0.7rem',
                 borderRadius: 6,
                 border: 'none',
                 fontSize: '0.8rem',
-                cursor:
-                  !cliente || cliente === '__nuevo__'
-                    ? 'not-allowed'
-                    : 'pointer',
-                backgroundColor:
-                  !cliente || cliente === '__nuevo__' ? '#ccc' : '#e53935',
+                cursor: 'pointer',
+                backgroundColor: '#1976d2',
                 color: '#fff',
               }}
             >
-              🗑 Eliminar cliente
+              ✏️ Renombrar cliente
             </button>
-            <span style={{ fontSize: '0.8rem', color: '#555' }}>
-              Borra al cliente y sus recepciones.
-            </span>
           </div>
+        )}
 
-          {cliente && cliente !== '__nuevo__' && (
+        {/* campos para nuevo cliente */}
+        {cliente === '__nuevo__' && (
+          <>
+            <input
+              type="text"
+              placeholder="Escribe nuevo cliente"
+              value={clienteNuevo}
+              onChange={(e) => setClienteNuevo(e.target.value)}
+              required
+              style={inputEstilo}
+            />
+            <input
+              type="tel"
+              placeholder="Número de teléfono (10 dígitos, opcional)"
+              value={telefonoNuevo}
+              onChange={(e) => {
+                const valor = e.target.value;
+                if (/^\d{0,10}$/.test(valor)) {
+                  setTelefonoNuevo(valor);
+                }
+              }}
+              style={inputEstilo}
+            />
+          </>
+        )}
+
+        {/* líneas de tipos */}
+        {lineas.map((linea, index) => {
+          const kilos = parseFloat(linea.kilos || 0);
+          const toneladas = kilos / 1000;
+
+          return (
             <div
+              key={index}
               style={{
-                marginTop: '0.5rem',
-                display: 'flex',
-                gap: 8,
-                alignItems: 'center',
-                flexWrap: 'wrap',
+                marginTop: '1.5rem',
+                padding: '1rem',
+                backgroundColor: '#f9f9f9',
+                borderRadius: '8px',
+                border: '1px solid #ddd',
               }}
             >
-              <input
-                type="text"
-                value={nombreEditado}
-                onChange={(e) => setNombreEditado(e.target.value)}
-                style={{ ...inputEstilo, width: '60%' }}
-                placeholder="Nuevo nombre del cliente"
-              />
-              <button
-                type="button"
-                onClick={handleRenombrarCliente}
-                style={{
-                  padding: '0.35rem 0.7rem',
-                  borderRadius: 6,
-                  border: 'none',
-                  fontSize: '0.8rem',
-                  cursor: 'pointer',
-                  backgroundColor: '#1976d2',
-                  color: '#fff',
-                }}
-              >
-                ✏️ Renombrar cliente
-              </button>
-            </div>
-          )}
+              <h4>Tipo #{index + 1}</h4>
 
-          {/* campos para nuevo cliente */}
-          {cliente === '__nuevo__' && (
-            <>
-              <input
-                type="text"
-                placeholder="Escribe nuevo cliente"
-                value={clienteNuevo}
-                onChange={(e) => setClienteNuevo(e.target.value)}
+              <label>Tipo de aguacate:</label>
+              <br />
+              <select
+                value={linea.tipo}
+                onChange={(e) =>
+                  handleLineaChange(index, 'tipo', e.target.value)
+                }
                 required
-                style={inputEstilo}
-              />
-              <input
-                type="tel"
-                placeholder="Número de teléfono (10 dígitos, opcional)"
-                value={telefonoNuevo}
-                onChange={(e) => {
-                  const valor = e.target.value;
-                  if (/^\d{0,10}$/.test(valor)) {
-                    setTelefonoNuevo(valor);
-                  }
-                }}
-                style={inputEstilo}
-              />
-            </>
-          )}
+                style={{ ...inputEstilo, marginBottom: '1rem' }}
+              >
+                <option value="">Selecciona tipo</option>
+                {tiposDisponibles.map((tipo) => (
+                  <option key={tipo} value={tipo}>
+                    {tipo}
+                  </option>
+                ))}
+              </select>
 
-          {/* líneas de tipos */}
-          {lineas.map((linea, index) => {
-            const kilos = parseFloat(linea.kilos || 0);
-            const toneladas = kilos / 1000;
-
-            return (
               <div
-                key={index}
                 style={{
-                  marginTop: '1.5rem',
-                  padding: '1rem',
-                  backgroundColor: '#f9f9f9',
-                  borderRadius: '8px',
-                  border: '1px solid #ddd',
+                  display: 'flex',
+                  gap: '1rem',
+                  alignItems: 'flex-end',
+                  marginBottom: '0.6rem',
+                  flexWrap: 'wrap',
                 }}
               >
-                <h4>Tipo #{index + 1}</h4>
+                <div style={{ flex: 1, minWidth: '120px' }}>
+                  <label>Cajas:</label>
+                  <br />
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={linea.cajas}
+                    onChange={(e) =>
+                      handleLineaChange(index, 'cajas', e.target.value)
+                    }
+                    style={{
+                      width: '100%',
+                      padding: '0.3rem 0.4rem',
+                      borderRadius: '6px',
+                      border: '1px solid #ccc',
+                      fontSize: '0.9rem',
+                      height: '34px',
+                    }}
+                  />
+                </div>
 
-                <label>Tipo de aguacate:</label>
-                <br />
-                <select
-                  value={linea.tipo}
-                  onChange={(e) =>
-                    handleLineaChange(index, 'tipo', e.target.value)
-                  }
-                  required
-                  style={{ ...inputEstilo, marginBottom: '1rem' }}
-                >
-                  <option value="">Selecciona tipo</option>
-                  {tiposDisponibles.map((tipo) => (
-                    <option key={tipo} value={tipo}>
-                      {tipo}
-                    </option>
-                  ))}
-                </select>
-
-               <div
-  style={{
-    display: 'flex',
-    gap: '1rem',
-    alignItems: 'flex-end',
-    marginBottom: '0.6rem',
-    flexWrap: 'wrap',
-  }}
->
-  <div style={{ flex: 1, minWidth: '120px' }}>
-    <label>Cajas:</label>
-    <br />
-    <input
-      type="number"
-      min="0"
-      step="1"
-      value={linea.cajas}
-      onChange={(e) =>
-        handleLineaChange(index, 'cajas', e.target.value)
-      }
-      style={{
-        width: '100%',
-        padding: '0.3rem 0.4rem',
-        borderRadius: '6px',
-        border: '1px solid #ccc',
-        fontSize: '0.9rem',
-        height: '34px',
-      }}
-    />
-  </div>
-
-  <div style={{ flex: 1, minWidth: '120px' }}>
-    <label>Kilos:</label>
-    <br />
-    <input
-      type="number"
-      step="0.01"
-      value={linea.kilos}
-      onChange={(e) =>
-        handleLineaChange(index, 'kilos', e.target.value)
-      }
-      required
-      style={{
-        width: '100%',
-        padding: '0.3rem 0.4rem',
-        borderRadius: '6px',
-        border: '1px solid #ccc',
-        fontSize: '0.9rem',
-        height: '34px',
-      }}
-    />
-  </div>
-</div>
-
-
-                <p style={{ fontSize: '0.9rem', color: '#555' }}>
-                  ≈ {toneladas.toFixed(2)} toneladas
-                </p>
-
-                {lineas.length > 1 && (
-                  <div style={{ marginTop: '0.5rem' }}>
-                    <button
-                      type="button"
-                      onClick={() => eliminarLinea(index)}
-                      style={{
-                        backgroundColor: '#ccc',
-                        border: 'none',
-                        padding: '0.5rem',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        display: 'block',
-                      }}
-                    >
-                      Eliminar esta línea
-                    </button>
-                  </div>
-                )}
+                <div style={{ flex: 1, minWidth: '120px' }}>
+                  <label>Kilos:</label>
+                  <br />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={linea.kilos}
+                    onChange={(e) =>
+                      handleLineaChange(index, 'kilos', e.target.value)
+                    }
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '0.3rem 0.4rem',
+                      borderRadius: '6px',
+                      border: '1px solid #ccc',
+                      fontSize: '0.9rem',
+                      height: '34px',
+                    }}
+                  />
+                </div>
               </div>
-            );
-          })}
 
-          <p
-            style={{
-              marginTop: '1rem',
-              fontWeight: 'bold',
-              textAlign: 'right',
-            }}
-          >
-            Total: {totalKilos.toLocaleString()} kg ≈ {totalToneladas}{' '}
-            toneladas
-          </p>
+              <p style={{ fontSize: '0.9rem', color: '#555' }}>
+                ≈ {toneladas.toFixed(2)} toneladas
+              </p>
 
-          <button type="button" onClick={agregarLinea} style={botonSecundario}>
-            ➕ Agregar otro tipo
-          </button>
+              {lineas.length > 1 && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => eliminarLinea(index)}
+                    style={{
+                      backgroundColor: '#ccc',
+                      border: 'none',
+                      padding: '0.5rem',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      display: 'block',
+                    }}
+                  >
+                    Eliminar esta línea
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
 
-          <button type="submit" style={botonPrincipal}>
-            Guardar recepción
-          </button>
-        </form>
+        <p
+          style={{
+            marginTop: '1rem',
+            fontWeight: 'bold',
+            textAlign: 'right',
+          }}
+        >
+          Total: {totalKilos.toLocaleString()} kg ≈ {totalToneladas} toneladas
+        </p>
 
-        {mensaje && (
-          <p
-            style={{
-              marginTop: '1rem',
-              textAlign: 'center',
-              color: mensaje.includes('❌') ? 'red' : 'green',
-            }}
-          >
-            {mensaje}
-          </p>
-        )}
+        <button type="button" onClick={agregarLinea} style={botonSecundario}>
+          ➕ Agregar otro tipo
+        </button>
+
+        <button type="submit" style={botonPrincipal}>
+          Guardar recepción
+        </button>
+      </form>
+
+      {mensaje && (
+        <p
+          style={{
+            marginTop: '1rem',
+            textAlign: 'center',
+            color: mensaje.includes('❌') ? 'red' : 'green',
+          }}
+        >
+          {mensaje}
+        </p>
+      )}
+    </div>
+  );
+
+  // En modo secretaria lo centramos dentro de la sección
+  if (modoSecretaria) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
+        {card}
       </div>
+    );
+  }
+
+  // En modo normal, sigue con su layout de pantalla completa
+  return (
+    <div
+      style={{
+        backgroundColor: '#f5f5f5',
+        minHeight: '100vh',
+        paddingTop: '2rem',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'flex-start',
+        fontFamily: 'Arial, sans-serif',
+      }}
+    >
+      {card}
     </div>
   );
 }

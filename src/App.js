@@ -7,7 +7,7 @@ import {
   Link,
   Navigate,
   useLocation,
-  useNavigate
+  useNavigate,
 } from 'react-router-dom';
 
 import Login from './Login';
@@ -16,6 +16,7 @@ import ClasificacionEntrega from './ClasificacionEntrega';
 import VentaForm from './VentaForm';
 import VentasAdmin from './VentasAdmin';
 import SecretariaAdmin from './SecretariaAdmin';
+import SecretariaFlujoCompleto from './SecretariaFlujoCompleto';
 import { supabase } from './supabaseClient';
 
 function AppWrapper() {
@@ -53,128 +54,205 @@ function App() {
 
     obtenerUsuarioYRol();
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setUser(session.user);
-        supabase
-          .from('profiles')
-          .select('rol')
-          .eq('id', session.user.id)
-          .single()
-          .then(({ data, error }) => {
-            if (!error && data) setRol(data.rol);
-            setCargando(false);
-          });
-      } else {
-        setUser(null);
-        setRol(null);
-        setCargando(false);
-        navigate('/login');
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (session?.user) {
+          setUser(session.user);
+          supabase
+            .from('profiles')
+            .select('rol')
+            .eq('id', session.user.id)
+            .single()
+            .then(({ data, error }) => {
+              if (!error && data) setRol(data.rol);
+              setCargando(false);
+            });
+        } else {
+          setUser(null);
+          setRol(null);
+          setCargando(false);
+          navigate('/login');
+        }
       }
-    });
+    );
 
     return () => listener?.subscription.unsubscribe();
   }, [navigate]);
 
-  // ⛳ Redirección automática por rol (no rebotar a secretaria cuando entra a recep/clasif)
+  // Redirección automática por rol
   useEffect(() => {
     if (!cargando && user) {
       const currentPath = location.pathname;
 
       if (rol === 'recepcion' && currentPath !== '/recepcion') {
         navigate('/recepcion', { replace: true });
-      } else if (rol === 'clasificacion' && currentPath !== '/clasificacion-entrega') {
+      } else if (
+        rol === 'clasificacion' &&
+        currentPath !== '/clasificacion-entrega'
+      ) {
         navigate('/clasificacion-entrega', { replace: true });
       } else if (
         rol === 'secretaria' &&
-        !['/ventas', '/ventas-admin', '/secretaria', '/recepcion', '/clasificacion-entrega'].includes(currentPath)
+        ![
+          '/secretaria-flujo',
+          '/ventas',
+          '/ventas-admin',
+          '/secretaria',
+          '/recepcion',
+          '/clasificacion-entrega',
+        ].includes(currentPath)
       ) {
-        navigate('/ventas', { replace: true });
+        // por defecto la secretaria cae al flujo completo
+        navigate('/secretaria-flujo', { replace: true });
       }
     }
   }, [cargando, user, rol, navigate, location.pathname]);
 
+  // 👇 NUEVO: ocultar barra en la ruta del flujo
+  // Ocultar barra en flujo completo y en la vista principal de Secretaría
+const ocultarBarra =
+  location.pathname === '/secretaria-flujo' ||
+  location.pathname === '/secretaria';
+
+
   return (
     <div>
-      {/* Barra superior */}
-      <div style={{ padding: '1rem', background: '#eee' }}>
-        <Link to="/login" style={{ marginRight: '1rem' }}>Inicio de Sesión</Link>
-
-        {user && rol === 'recepcion' && (
-          <Link to="/recepcion" style={{ marginRight: '1rem' }}>Recepción</Link>
-        )}
-
-        {user && rol === 'clasificacion' && (
-          <Link to="/clasificacion-entrega" style={{ marginRight: '1rem' }}>
-            Clasificación (entrega)
+      {/* Barra superior (solo si NO estamos en /secretaria-flujo) */}
+      {!ocultarBarra && (
+        <div style={{ padding: '1rem', background: '#eee' }}>
+          <Link to="/login" style={{ marginRight: '1rem' }}>
+            Inicio de Sesión
           </Link>
-        )}
 
-        {user && rol === 'secretaria' && (
-          <>
-            <Link to="/ventas" style={{ marginRight: '1rem' }}>Ventas</Link>
-            <Link to="/ventas-admin" style={{ marginRight: '1rem' }}>Admin</Link>
-            <Link to="/secretaria">Secretaría</Link>
-          </>
-        )}
-      </div>
+          {user && rol === 'recepcion' && (
+            <Link to="/recepcion" style={{ marginRight: '1rem' }}>
+              Recepción
+            </Link>
+          )}
+
+          {user && rol === 'clasificacion' && (
+            <Link to="/clasificacion-entrega" style={{ marginRight: '1rem' }}>
+              Clasificación (entrega)
+            </Link>
+          )}
+
+          {user && rol === 'secretaria' && (
+            <>
+              <Link
+                to="/secretaria-flujo"
+                style={{ marginRight: '1rem' }}
+              >
+                Flujo completo
+              </Link>
+              <Link to="/ventas" style={{ marginRight: '1rem' }}>
+                Ventas
+              </Link>
+              <Link to="/ventas-admin" style={{ marginRight: '1rem' }}>
+                Admin
+              </Link>
+              <Link to="/secretaria">Secretaría</Link>
+            </>
+          )}
+        </div>
+      )}
 
       <Routes>
         <Route path="/login" element={<Login />} />
 
-        {/* 🔓 Permite recepcion A secretaria también */}
+        {/* Recepción: recepcionista + secretaria */}
         <Route
           path="/recepcion"
           element={
-            cargando ? null : user && (rol === 'recepcion' || rol === 'secretaria') ? (
+            cargando ? null : user &&
+              (rol === 'recepcion' || rol === 'secretaria') ? (
               <Recepcion />
             ) : (
-              <Navigate to="/login" replace state={{ from: location.pathname }} />
+              <Navigate
+                to="/login"
+                replace
+                state={{ from: location.pathname }}
+              />
             )
           }
         />
 
-        {/* 🔓 Permite clasificacion-entrega A secretaria también */}
+        {/* Clasificación: clasificador + secretaria */}
         <Route
           path="/clasificacion-entrega"
           element={
-            cargando ? null : user && (rol === 'clasificacion' || rol === 'secretaria') ? (
+            cargando ? null : user &&
+              (rol === 'clasificacion' || rol === 'secretaria') ? (
               <ClasificacionEntrega />
             ) : (
-              <Navigate to="/login" replace state={{ from: location.pathname }} />
+              <Navigate
+                to="/login"
+                replace
+                state={{ from: location.pathname }}
+              />
             )
           }
         />
 
+        {/* Venta individual (pantalla vieja) */}
         <Route
           path="/ventas"
           element={
             cargando ? null : user && rol === 'secretaria' ? (
               <VentaForm />
             ) : (
-              <Navigate to="/login" replace state={{ from: location.pathname }} />
+              <Navigate
+                to="/login"
+                replace
+                state={{ from: location.pathname }}
+              />
             )
           }
         />
 
+        {/* Admin de ventas */}
         <Route
           path="/ventas-admin"
           element={
             cargando ? null : user && rol === 'secretaria' ? (
               <VentasAdmin />
             ) : (
-              <Navigate to="/login" replace state={{ from: location.pathname }} />
+              <Navigate
+                to="/login"
+                replace
+                state={{ from: location.pathname }}
+              />
             )
           }
         />
 
+        {/* Secretaría (notas, PDFs) */}
         <Route
           path="/secretaria"
           element={
             cargando ? null : user && rol === 'secretaria' ? (
               <SecretariaAdmin />
             ) : (
-              <Navigate to="/login" replace state={{ from: location.pathname }} />
+              <Navigate
+                to="/login"
+                replace
+                state={{ from: location.pathname }}
+              />
+            )
+          }
+        />
+
+        {/* Flujo completo en una sola pantalla (Recepción + Clasificación + Compra) */}
+        <Route
+          path="/secretaria-flujo"
+          element={
+            cargando ? null : user && rol === 'secretaria' ? (
+              <SecretariaFlujoCompleto />
+            ) : (
+              <Navigate
+                to="/login"
+                replace
+                state={{ from: location.pathname }}
+              />
             )
           }
         />
