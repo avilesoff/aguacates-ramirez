@@ -28,27 +28,48 @@ export default function SecretariaAdmin() {
   const [hoverRow, setHoverRow] = useState(null);
   useEffect(() => setHoverRow(null), [tab]);
 
-  // notas revisadas por usuario actual (venta_id -> true)
   const [ventasRevisadas, setVentasRevisadas] = useState({});
-  // lista de correos que han revisado cada venta (venta_id -> [email,...])
   const [revisoresPorVenta, setRevisoresPorVenta] = useState({});
-const [mostrarRevisadas, setMostrarRevisadas] = useState(false);
+
+  // colapsar/mostrar tarjetas
+  const [mostrarRevisadas, setMostrarRevisadas] = useState(false);
+
+  // correo del usuario actual (para filtros)
+  const [correoActual, setCorreoActual] = useState(null);
+
+  // filtro para tarjetas: 'todas' o un correo específico
+  const [filtroRevisadas, setFiltroRevisadas] = useState('todas');
+
+  // Revisores únicos encontrados en las notas
+  const revisoresUnicos = React.useMemo(() => {
+    const set = new Set();
+
+    Object.values(revisoresPorVenta || {}).forEach((arr) => {
+      (arr || []).forEach((correo) => {
+        if (correo) set.add(correo);
+      });
+    });
+
+    return Array.from(set).sort();
+  }, [revisoresPorVenta]);
 
   // 👉 Separar ventas en PENDIENTES y REVISADAS (ordenadas por fecha desc.)
-  const ventasPendientes = useMemo(
-    () =>
-      (ventas || [])
-        .filter((v) => !ventasRevisadas[v.id])
-        .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)),
-    [ventas, ventasRevisadas]
-  );
+const ventasPendientes = useMemo(
+  () =>
+    (ventas || [])
+      // Pendiente = sin ningún revisor aún
+      .filter((v) => (revisoresPorVenta[v.id] || []).length === 0)
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)),
+  [ventas, revisoresPorVenta]
+);
+
 
   const ventasRevisadasSolo = useMemo(
     () =>
       (ventas || [])
-        .filter((v) => ventasRevisadas[v.id])
+        .filter((v) => (revisoresPorVenta[v.id] || []).length > 0)
         .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)),
-    [ventas, ventasRevisadas]
+    [ventas, revisoresPorVenta]
   );
 
   const money = (n) =>
@@ -298,18 +319,17 @@ const [mostrarRevisadas, setMostrarRevisadas] = useState(false);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
     doc.text(
-  (panelKg || 0).toLocaleString(),
-  panelX + panelW - 4,
-  panelY + 9,
-  { align: 'right' }
-);
-doc.text(
-  (panelCajas || 0).toLocaleString(),
-  panelX + panelW - 4,
-  panelY + 20,
-  { align: 'right' }
-);
-
+      (panelKg || 0).toLocaleString(),
+      panelX + panelW - 4,
+      panelY + 9,
+      { align: 'right' }
+    );
+    doc.text(
+      (panelCajas || 0).toLocaleString(),
+      panelX + panelW - 4,
+      panelY + 20,
+      { align: 'right' }
+    );
 
     const boxIcon = await loadImageAsDataURL('/icons/box.jpg');
     const kgIcon = await loadImageAsDataURL('/icons/kg.png');
@@ -317,8 +337,7 @@ doc.text(
     if (kgIcon) doc.addImage(kgIcon, 'PNG', panelX + 5, panelY + 2, 12, 12);
     if (boxIcon) doc.addImage(boxIcon, 'JPG', panelX + 5, panelY + 13, 12, 12);
 
-y = panelY + panelH + 10;
-
+    y = panelY + panelH + 10;
 
     // Detalle por tipo
     const grupos = {};
@@ -358,69 +377,68 @@ y = panelY + panelH + 10;
       totalGeneralCajas += subtotalCajas;
       totalGeneralImporte += subtotalImporte;
 
-     // Título del tipo
-doc.setFont('helvetica', 'bold');
-doc.setFontSize(11);
-doc.setTextColor(46, 125, 50);
-doc.text(`Tipo: ${tituloGrupo}`, margin, y + 5);
-doc.setTextColor(0);
+      // Título del tipo
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(46, 125, 50);
+      doc.text(`Tipo: ${tituloGrupo}`, margin, y + 5);
+      doc.setTextColor(0);
 
-// Resumen de cajas y kilos ARRIBA de la tabla
-doc.setFont('helvetica', 'bold');
-doc.setFontSize(10);
-doc.text(
-  `Cajas: ${subtotalCajas.toLocaleString()}   Kilos: ${subtotalKg.toLocaleString()}`,
-  pageW - margin,
-  y + 5,
-  { align: 'right' }
-);
+      // Resumen de cajas y kilos ARRIBA de la tabla
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text(
+        `Cajas: ${subtotalCajas.toLocaleString()}   Kilos: ${subtotalKg.toLocaleString()}`,
+        pageW - margin,
+        y + 5,
+        { align: 'right' }
+      );
 
-y += 10;
+      y += 10;
 
-// === TABLA (ya sin columna de cajas, ver cambio del punto 2) ===
-autoTable(doc, {
-  startY: y,
-  head: [['Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
-  body: items.map((p) => {
-    const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
-    const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
-    const importe = Number(p.importe ?? kg * precio) || 0;
-    const descripcion = String(
-      p.descripcion ?? p.calibre ?? p.tipo ?? '-'
-    );
-    return [
-      kg.toFixed(0),
-      descripcion,
-      money(precio),
-      money(importe),
-    ];
-  }),
-  styles: { fontSize: 10, cellPadding: 2 },
-  headStyles: { fillColor: [46, 125, 50], textColor: 255 },
-  alternateRowStyles: { fillColor: [238, 245, 238] },
-  columnStyles: {
-    0: { halign: 'right', cellWidth: 25 },
-    1: { cellWidth: 'auto' },
-    2: { halign: 'right', cellWidth: 30 },
-    3: { halign: 'right', cellWidth: 30 },
-  },
-  theme: 'striped',
-  margin: { left: margin, right: margin },
-});
+      // === TABLA (sin columna de cajas) ===
+      autoTable(doc, {
+        startY: y,
+        head: [['Cantidad (kg)', 'Descripción', 'Precio unitario', 'Importe']],
+        body: items.map((p) => {
+          const kg = Number(p.kg ?? p.cantidad ?? 0) || 0;
+          const precio = Number(p.precio_unitario ?? p.precio ?? 0) || 0;
+          const importe = Number(p.importe ?? kg * precio) || 0;
+          const descripcion = String(
+            p.descripcion ?? p.calibre ?? p.tipo ?? '-'
+          );
+          return [
+            kg.toFixed(0),
+            descripcion,
+            money(precio),
+            money(importe),
+          ];
+        }),
+        styles: { fontSize: 10, cellPadding: 2 },
+        headStyles: { fillColor: [46, 125, 50], textColor: 255 },
+        alternateRowStyles: { fillColor: [238, 245, 238] },
+        columnStyles: {
+          0: { halign: 'right', cellWidth: 25 },
+          1: { cellWidth: 'auto' },
+          2: { halign: 'right', cellWidth: 30 },
+          3: { halign: 'right', cellWidth: 30 },
+        },
+        theme: 'striped',
+        margin: { left: margin, right: margin },
+      });
 
-y = doc.lastAutoTable.finalY + 6;
+      y = doc.lastAutoTable.finalY + 6;
 
-// Subtotal ABAJO: solo dinero
-doc.setFont('helvetica', 'bold');
-doc.setFontSize(10);
-doc.text(
-  `Subtotal ${tituloGrupo}: ${money(subtotalImporte)}`,
-  pageW - margin,
-  y,
-  { align: 'right' }
-);
-y += 10;
-
+      // Subtotal ABAJO: solo dinero
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text(
+        `Subtotal ${tituloGrupo}: ${money(subtotalImporte)}`,
+        pageW - margin,
+        y,
+        { align: 'right' }
+      );
+      y += 10;
     }
 
     const anticipo = parseFloat(venta.anticipo || 0);
@@ -465,7 +483,7 @@ y += 10;
 
     doc.save(`nota_compra_${fmtFolio(venta.numero_nota)}.pdf`);
 
-    // Marcar como revisada
+    // Marcar como revisada POR ESTE USUARIO
     try {
       const { data: userData, error: userError } = await supabase.auth.getUser();
       const email = userData?.user?.email;
@@ -483,6 +501,7 @@ y += 10;
         if (upsertError) {
           console.warn('Error marcando venta revisada:', upsertError.message);
         } else {
+          // Esta venta se marca como revisada SOLO para este usuario
           setVentasRevisadas((prev) => ({
             ...prev,
             [venta.id]: true,
@@ -525,8 +544,12 @@ y += 10;
         setRevisoresPorVenta({});
         return;
       }
+
       const { data: userData, error: userError } = await supabase.auth.getUser();
       const currentEmail = userData?.user?.email || null;
+
+      // guardamos el correo del usuario logueado para usarlo en la UI
+      setCorreoActual(currentEmail);
 
       const ids = ventasArr.map((v) => v.id);
       const { data: revData, error: revError } = await supabase
@@ -547,6 +570,7 @@ y += 10;
       (revData || []).forEach((r) => {
         if (!revisoresMap[r.venta_id]) revisoresMap[r.venta_id] = new Set();
         if (r.user_email) revisoresMap[r.venta_id].add(r.user_email);
+        // Solo marcamos la venta como revisada para el usuario actual
         if (currentEmail && r.user_email === currentEmail) {
           revisadasMap[r.venta_id] = true;
         }
@@ -990,24 +1014,39 @@ y += 10;
 
                         {/* Estado para usuario actual */}
                         <td style={td}>
-                          <span
-                            style={{
-                              padding: '0.15rem 0.5rem',
-                              borderRadius: '999px',
-                              fontSize: '0.75rem',
-                              color: '#fff',
-                              backgroundColor: ventasRevisadas[v.id] ? '#2e7d32' : '#f9a825',
-                            }}
-                          >
-                            {ventasRevisadas[v.id] ? 'Revisada' : 'Pendiente'}
-                          </span>
-                        </td>
+  {(() => {
+    const lista = revisoresPorVenta[v.id] || [];
+    const revisadaPorAlguien = lista.length > 0;
 
-                        {/* Quién la revisó (todos los correos) */}
+    return (
+      <span
+        style={{
+          padding: '0.15rem 0.5rem',
+          borderRadius: '999px',
+          fontSize: '0.75rem',
+          color: '#fff',
+          backgroundColor: revisadaPorAlguien ? '#2e7d32' : '#f9a825',
+        }}
+      >
+        {revisadaPorAlguien ? 'Revisada' : 'Pendiente'}
+      </span>
+    );
+  })()}
+</td>
+
+
+                        {/* Quién la revisó (todos los correos, marcando el tuyo) */}
                         <td style={{ ...td, fontSize: '0.8rem', color: '#555' }}>
-                          {revisoresPorVenta[v.id] && revisoresPorVenta[v.id].length
-                            ? revisoresPorVenta[v.id].join(', ')
-                            : '—'}
+                          {(() => {
+                            const lista = revisoresPorVenta[v.id] || [];
+                            if (!lista.length) return '—';
+
+                            return lista
+                              .map((email) =>
+                                correoActual && email === correoActual ? `${email} (tú)` : email
+                              )
+                              .join(', ');
+                          })()}
                         </td>
 
                         <td style={{ ...td, whiteSpace: 'nowrap' }}>
@@ -1049,90 +1088,174 @@ y += 10;
             </div>
           </div>
 
-{/* Tarjetas de REVISADAS (colapsables) */}
-{ventasRevisadasSolo.length > 0 && (
-  <div style={{ marginTop: 24 }}>
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 8,
-      }}
-    >
-      <div>
-        <h3 style={{ margin: '0 0 4px', color: '#2e7d32' }}>Notas revisadas</h3>
-        <p style={{ margin: 0, fontSize: '0.85rem', color: '#555' }}>
-          {ventasRevisadasSolo.length} nota(s) revisada(s) para este día.
-        </p>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => setMostrarRevisadas((v) => !v)}
-        style={btnToggleRevisadas}
-      >
-        {mostrarRevisadas ? 'Ocultar notas revisadas' : 'Mostrar notas revisadas'}
-      </button>
-    </div>
-
-    {mostrarRevisadas && (
-      <div style={cardsGrid}>
-        {ventasRevisadasSolo.map((v) => (
-          <div key={v.id} style={cardRevisada}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 4,
-              }}
-            >
-              <span style={chipFolio}>Folio {fmtFolio(v.numero_nota)}</span>
-              <span style={chipEstadoRevisada}>Revisada</span>
-            </div>
-
-            <div style={{ fontWeight: 'bold', marginBottom: 2 }}>{v.nombre_cliente}</div>
-            <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: 6 }}>
-              {fmtFecha(v.fecha)}
-            </div>
-
-            <div style={{ fontSize: '0.9rem', marginBottom: 4 }}>
-              Total: <strong>{money(v.total || 0)}</strong>
-            </div>
-
-            <div style={{ fontSize: '0.8rem', color: '#777', minHeight: 18 }}>
-              {revisoresPorVenta[v.id] && revisoresPorVenta[v.id].length
-                ? `Revisó: ${revisoresPorVenta[v.id].join(', ')}`
-                : 'Revisado (sin correo registrado)'}
-            </div>
-
-            <div
-              style={{
-                marginTop: 8,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <button
-                onClick={() => removeRow('ventas', v.id)}
-                style={btnCardDelete}
+          {/* Tarjetas de REVISADAS (colapsables + filtro por usuario) */}
+          {ventasRevisadasSolo.length > 0 && (
+            <div style={{ marginTop: 24 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 8,
+                  gap: 12,
+                  flexWrap: 'wrap',
+                }}
               >
-                🗑️ Eliminar
-              </button>
+                <div>
+                  <h3 style={{ margin: '0 0 4px', color: '#2e7d32' }}>Notas revisadas</h3>
+                  <p style={{ margin: 0, fontSize: '0.85rem', color: '#555' }}>
+                    {ventasRevisadasSolo.length} nota(s) revisada(s) para este día.
+                  </p>
+                </div>
 
-              <button onClick={() => descargarPDF(v)} style={btnCardPDF}>
-                📄 Ver PDF
-              </button>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {/* Botón mostrar/ocultar tarjetas */}
+                  <button
+                    type="button"
+                    onClick={() => setMostrarRevisadas((v) => !v)}
+                    style={btnToggleRevisadas}
+                  >
+                    {mostrarRevisadas ? 'Ocultar notas revisadas' : 'Mostrar notas revisadas'}
+                  </button>
+
+                  {/* Filtros por usuario */}
+                  <button
+                    type="button"
+                    onClick={() => setFiltroRevisadas('todas')}
+                    style={{
+                      ...btnToggleRevisadas,
+                      backgroundColor: filtroRevisadas === 'todas' ? '#2e7d32' : '#e0e0e0',
+                      color: filtroRevisadas === 'todas' ? '#fff' : '#333',
+                    }}
+                  >
+                    Todas
+                  </button>
+
+                  {revisoresUnicos.map((email) => (
+                    <button
+                      key={email}
+                      type="button"
+                      onClick={() => setFiltroRevisadas(email)}
+                      style={{
+                        ...btnToggleRevisadas,
+                        backgroundColor: filtroRevisadas === email ? '#2e7d32' : '#e0e0e0',
+                        color: filtroRevisadas === email ? '#fff' : '#333',
+                      }}
+                    >
+                      {email === correoActual
+                        ? `Revisadas por ${email} (tú)`
+                        : `Revisadas por ${email}`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {mostrarRevisadas &&
+                (() => {
+                  const listaTarjetas =
+                    filtroRevisadas !== 'todas'
+                      ? ventasRevisadasSolo.filter((v) =>
+                          (revisoresPorVenta[v.id] || []).includes(filtroRevisadas)
+                        )
+                      : ventasRevisadasSolo;
+
+                  if (!listaTarjetas.length) {
+                    return (
+                      <p
+                        style={{
+                          marginTop: 8,
+                          fontSize: '0.85rem',
+                          color: '#777',
+                          fontStyle: 'italic',
+                        }}
+                      >
+                        {filtroRevisadas === 'todas'
+                          ? 'No hay notas revisadas en este día.'
+                          : `No hay notas revisadas por ${filtroRevisadas} en este día.`}
+                      </p>
+                    );
+                  }
+
+                  return (
+                    <div style={cardsGrid}>
+                      {listaTarjetas.map((v) => (
+                        <div key={v.id} style={cardRevisada}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              marginBottom: 4,
+                            }}
+                          >
+                            <span style={chipFolio}>Folio {fmtFolio(v.numero_nota)}</span>
+                            <span style={chipEstadoRevisada}>Revisada</span>
+                          </div>
+
+                          <div style={{ fontWeight: 'bold', marginBottom: 2 }}>
+                            {v.nombre_cliente}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: '0.85rem',
+                              color: '#555',
+                              marginBottom: 6,
+                            }}
+                          >
+                            {fmtFecha(v.fecha)}
+                          </div>
+
+                          <div style={{ fontSize: '0.9rem', marginBottom: 4 }}>
+                            Total: <strong>{money(v.total || 0)}</strong>
+                          </div>
+
+                          <div style={{ fontSize: '0.8rem', color: '#777', minHeight: 18 }}>
+                            {(() => {
+                              const lista = revisoresPorVenta[v.id] || [];
+                              if (!lista.length) return 'Revisada (sin correo registrado)';
+
+                              return (
+                                'Revisó: ' +
+                                lista
+                                  .map((email) =>
+                                    correoActual && email === correoActual
+                                      ? `${email} (tú)`
+                                      : email
+                                  )
+                                  .join(', ')
+                              );
+                            })()}
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: 8,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <button
+                              onClick={() => removeRow('ventas', v.id)}
+                              style={btnCardDelete}
+                            >
+                              🗑️ Eliminar
+                            </button>
+
+                            <button
+                              onClick={() => descargarPDF(v)}
+                              style={btnCardPDF}
+                            >
+                              📄 Ver PDF
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
             </div>
-          </div>
-        ))}
-      </div>
-    )}
-  </div>
-)}
-
+          )}
         </>
       )}
 
