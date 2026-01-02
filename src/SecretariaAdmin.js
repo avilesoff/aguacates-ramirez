@@ -34,11 +34,22 @@ export default function SecretariaAdmin() {
   // colapsar/mostrar tarjetas
   const [mostrarRevisadas, setMostrarRevisadas] = useState(false);
 
+  // vista principal de compras: pendientes | revisadas | todas
+  const [vistaCompras, setVistaCompras] = useState('pendientes');
+
+
+  // Al cambiar de vista: en 'revisadas' se ocultará por defecto; en 'todas' se mostrará por defecto
+  useEffect(() => {
+    if (vistaCompras === 'revisadas') setMostrarRevisadas(false);
+    if (vistaCompras === 'todas') setMostrarRevisadas(true);
+  }, [vistaCompras]);
+
   // correo del usuario actual (para filtros)
   const [correoActual, setCorreoActual] = useState(null);
 
   // filtro para tarjetas: 'todas' o un correo específico
   const [filtroRevisadas, setFiltroRevisadas] = useState('todas');
+  const [busquedaRevisadas, setBusquedaRevisadas] = useState('');
 
   // Revisores únicos encontrados en las notas
   const revisoresUnicos = React.useMemo(() => {
@@ -71,6 +82,20 @@ const ventasPendientes = useMemo(
         .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)),
     [ventas, revisoresPorVenta]
   );
+
+  const resumenDia = useMemo(() => {
+    const toNum = (x) => {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const totalDia = (ventas || []).reduce((acc, v) => acc + toNum(v.total), 0);
+    const totalPendientes = (ventasPendientes || []).reduce((acc, v) => acc + toNum(v.total), 0);
+    const totalRevisadas = (ventasRevisadasSolo || []).reduce((acc, v) => acc + toNum(v.total), 0);
+
+    return { totalDia, totalPendientes, totalRevisadas };
+  }, [ventas, ventasPendientes, ventasRevisadasSolo]);
+
 
   const money = (n) =>
     new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(n || 0));
@@ -966,7 +991,7 @@ const ventasPendientes = useMemo(
       {/* COMPRAS */}
       {tab === 'ventas' && (
         <>
-          {/* Tabla de PENDIENTES */}
+                    {/* Tabla de PENDIENTES */}
           <div style={tableCard}>
             <div style={tableScroll}>
               <table style={tbl}>
@@ -983,7 +1008,14 @@ const ventasPendientes = useMemo(
                   </tr>
                 </thead>
                 <tbody>
-                  {ventasPendientes.map((v, i) => {
+                  {vistaCompras === 'revisadas' && (
+                    <tr>
+                      <td colSpan={8} style={{ ...td, textAlign: 'center', color: '#777' }}>
+                        Pendientes ocultas (vista Revisadas).
+                      </td>
+                    </tr>
+                  )}
+                  {vistaCompras !== 'revisadas' && ventasPendientes.map((v, i) => {
                     const editing = edit.tabla === 'ventas' && edit.id === v.id;
                     const row = editing ? edit.data : v;
                     const hovered = hoverRow === i;
@@ -1076,7 +1108,7 @@ const ventasPendientes = useMemo(
                       </tr>
                     );
                   })}
-                  {ventasPendientes.length === 0 && (
+                  {vistaCompras !== 'revisadas' && ventasPendientes.length === 0 && (
                     <tr>
                       <td colSpan={8} style={{ ...td, textAlign: 'center', color: '#777' }}>
                         No hay notas pendientes para este día.
@@ -1088,8 +1120,49 @@ const ventasPendientes = useMemo(
             </div>
           </div>
 
+{/* Vista rápida */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12, marginBottom: 8 }}>
+            <button
+              type="button"
+              onClick={() => setVistaCompras('pendientes')}
+              style={{
+                ...btnToggleRevisadas,
+                backgroundColor: vistaCompras === 'pendientes' ? '#2e7d32' : '#e0e0e0',
+                color: vistaCompras === 'pendientes' ? '#fff' : '#333',
+                fontWeight: 700,
+              }}
+            >
+              Pendientes ({ventasPendientes.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setVistaCompras('revisadas')}
+              style={{
+                ...btnToggleRevisadas,
+                backgroundColor: vistaCompras === 'revisadas' ? '#2e7d32' : '#e0e0e0',
+                color: vistaCompras === 'revisadas' ? '#fff' : '#333',
+                fontWeight: 700,
+              }}
+            >
+              Revisadas ({ventasRevisadasSolo.length})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setVistaCompras('todas')}
+              style={{
+                ...btnToggleRevisadas,
+                backgroundColor: vistaCompras === 'todas' ? '#2e7d32' : '#e0e0e0',
+                color: vistaCompras === 'todas' ? '#fff' : '#333',
+                fontWeight: 700,
+              }}
+            >
+              Todas ({ventas.length})
+            </button>
+          </div>
           {/* Tarjetas de REVISADAS (colapsables + filtro por usuario) */}
-          {ventasRevisadasSolo.length > 0 && (
+          {vistaCompras !== 'pendientes' && ventasRevisadasSolo.length > 0 && (
             <div style={{ marginTop: 24 }}>
               <div
                 style={{
@@ -1101,54 +1174,99 @@ const ventasPendientes = useMemo(
                   flexWrap: 'wrap',
                 }}
               >
-                <div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                    <div style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #cfe8ff', background: '#f4fbff' }}>
+                      <div style={{ fontSize: '0.75rem', color: '#555' }}>Total día</div>
+                      <div style={{ fontWeight: 800 }}>{money(resumenDia.totalDia)}</div>
+                    </div>
+                    <div style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #dcedc8', background: '#f9fff4' }}>
+                      <div style={{ fontSize: '0.75rem', color: '#555' }}>Pendientes</div>
+                      <div style={{ fontWeight: 800 }}>{ventasPendientes.length} — {money(resumenDia.totalPendientes)}</div>
+                    </div>
+                    <div style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #e5c7ff', background: '#fbf4ff' }}>
+                      <div style={{ fontSize: '0.75rem', color: '#555' }}>Revisadas</div>
+                      <div style={{ fontWeight: 800 }}>{ventasRevisadasSolo.length} — {money(resumenDia.totalRevisadas)}</div>
+                    </div>
+                  </div>
+
+                  <div>
                   <h3 style={{ margin: '0 0 4px', color: '#2e7d32' }}>Notas revisadas</h3>
                   <p style={{ margin: 0, fontSize: '0.85rem', color: '#555' }}>
                     {ventasRevisadasSolo.length} nota(s) revisada(s) para este día.
                   </p>
                 </div>
 
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {/* Botón mostrar/ocultar tarjetas */}
-                  <button
-                    type="button"
-                    onClick={() => setMostrarRevisadas((v) => !v)}
-                    style={btnToggleRevisadas}
-                  >
-                    {mostrarRevisadas ? 'Ocultar notas revisadas' : 'Mostrar notas revisadas'}
-                  </button>
-
-                  {/* Filtros por usuario */}
-                  <button
-                    type="button"
-                    onClick={() => setFiltroRevisadas('todas')}
-                    style={{
-                      ...btnToggleRevisadas,
-                      backgroundColor: filtroRevisadas === 'todas' ? '#2e7d32' : '#e0e0e0',
-                      color: filtroRevisadas === 'todas' ? '#fff' : '#333',
-                    }}
-                  >
-                    Todas
-                  </button>
-
-                  {revisoresUnicos.map((email) => (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {/* Mostrar/Ocultar solo aplica en vista 'todas' */}
+                  {(vistaCompras === 'todas' || vistaCompras === 'revisadas') && (
                     <button
-                      key={email}
                       type="button"
-                      onClick={() => setFiltroRevisadas(email)}
-                      style={{
-                        ...btnToggleRevisadas,
-                        backgroundColor: filtroRevisadas === email ? '#2e7d32' : '#e0e0e0',
-                        color: filtroRevisadas === email ? '#fff' : '#333',
-                      }}
+                      onClick={() => setMostrarRevisadas((v) => !v)}
+                      style={btnToggleRevisadas}
                     >
-                      {email === correoActual
-                        ? `Revisadas por ${email} (tú)`
-                        : `Revisadas por ${email}`}
+                      {mostrarRevisadas ? 'Ocultar notas revisadas' : 'Mostrar notas revisadas'}
                     </button>
-                  ))}
+                  )}
+
+                  {/* Filtro compacto */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: '0.85rem', color: '#555' }}>Buscar:</span>
+                      <input
+                        value={busquedaRevisadas}
+                        onChange={(e) => setBusquedaRevisadas(e.target.value)}
+                        placeholder="Folio o cliente..."
+                        style={{
+                          padding: '6px 10px',
+                          borderRadius: 8,
+                          border: '1px solid #cfcfcf',
+                          fontSize: '0.85rem',
+                          minWidth: 200,
+                        }}
+                      />
+                      {busquedaRevisadas && (
+                        <button
+                          type="button"
+                          onClick={() => setBusquedaRevisadas('')}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 8,
+                            border: '1px solid #cfcfcf',
+                            background: '#f5f5f5',
+                            cursor: 'pointer',
+                            fontSize: '0.85rem',
+                          }}
+                          title="Limpiar búsqueda"
+                        >
+                          Limpiar
+                        </button>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: '0.85rem', color: '#555' }}>Filtrar:</span>
+                    <select
+                      value={filtroRevisadas}
+                      onChange={(e) => setFiltroRevisadas(e.target.value)}
+                      style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid #cfcfcf', fontSize: '0.85rem' }}
+                    >
+                      <option value="todas">Todas</option>
+                      {revisoresUnicos.map((email) => (
+                        <option key={email} value={email}>
+                          {email === correoActual ? `${email} (tú)` : email}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  </div>
                 </div>
               </div>
+
+              {vistaCompras === 'revisadas' && !mostrarRevisadas && (
+                <p style={{ margin: '8px 0 0', color: '#777', fontSize: '0.85rem' }}>
+                  Notas revisadas ocultas. Presiona &quot;Mostrar notas revisadas&quot; para verlas.
+                </p>
+              )}
 
               {mostrarRevisadas &&
                 (() => {
@@ -1159,7 +1277,17 @@ const ventasPendientes = useMemo(
                         )
                       : ventasRevisadasSolo;
 
-                  if (!listaTarjetas.length) {
+                  const q = (busquedaRevisadas || '').trim().toLowerCase();
+
+                  const listaTarjetasFiltrada = q
+                    ? listaTarjetas.filter((v) => {
+                        const folio = fmtFolio(v.numero_nota).toLowerCase();
+                        const cliente = String(v.nombre_cliente || '').toLowerCase();
+                        return folio.includes(q) || cliente.includes(q);
+                      })
+                    : listaTarjetas;
+
+                  if (!listaTarjetasFiltrada.length) {
                     return (
                       <p
                         style={{
@@ -1178,7 +1306,7 @@ const ventasPendientes = useMemo(
 
                   return (
                     <div style={cardsGrid}>
-                      {listaTarjetas.map((v) => (
+                      {listaTarjetasFiltrada.map((v) => (
                         <div key={v.id} style={cardRevisada}>
                           <div
                             style={{
