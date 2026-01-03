@@ -83,20 +83,6 @@ const ventasPendientes = useMemo(
     [ventas, revisoresPorVenta]
   );
 
-  const resumenDia = useMemo(() => {
-    const toNum = (x) => {
-      const n = Number(x);
-      return Number.isFinite(n) ? n : 0;
-    };
-
-    const totalDia = (ventas || []).reduce((acc, v) => acc + toNum(v.total), 0);
-    const totalPendientes = (ventasPendientes || []).reduce((acc, v) => acc + toNum(v.total), 0);
-    const totalRevisadas = (ventasRevisadasSolo || []).reduce((acc, v) => acc + toNum(v.total), 0);
-
-    return { totalDia, totalPendientes, totalRevisadas };
-  }, [ventas, ventasPendientes, ventasRevisadasSolo]);
-
-
   const money = (n) =>
     new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(n || 0));
 
@@ -1174,21 +1160,6 @@ const ventasPendientes = useMemo(
                   flexWrap: 'wrap',
                 }}
               >
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-                    <div style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #cfe8ff', background: '#f4fbff' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#555' }}>Total día</div>
-                      <div style={{ fontWeight: 800 }}>{money(resumenDia.totalDia)}</div>
-                    </div>
-                    <div style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #dcedc8', background: '#f9fff4' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#555' }}>Pendientes</div>
-                      <div style={{ fontWeight: 800 }}>{ventasPendientes.length} — {money(resumenDia.totalPendientes)}</div>
-                    </div>
-                    <div style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid #e5c7ff', background: '#fbf4ff' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#555' }}>Revisadas</div>
-                      <div style={{ fontWeight: 800 }}>{ventasRevisadasSolo.length} — {money(resumenDia.totalRevisadas)}</div>
-                    </div>
-                  </div>
-
                   <div>
                   <h3 style={{ margin: '0 0 4px', color: '#2e7d32' }}>Notas revisadas</h3>
                   <p style={{ margin: 0, fontSize: '0.85rem', color: '#555' }}>
