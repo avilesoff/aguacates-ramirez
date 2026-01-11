@@ -13,6 +13,7 @@ function App({ modoSecretaria = false, onEntregaCreada }) {
   const [clienteNuevo, setClienteNuevo] = useState('');
   const [telefonoNuevo, setTelefonoNuevo] = useState('');
   const [clientesRegistrados, setClientesRegistrados] = useState([]);
+  const [clientesTelefonos, setClientesTelefonos] = useState({});
   const [lineas, setLineas] = useState([{ tipo: '', kilos: '', cajas: '' }]);
   const [mensaje, setMensaje] = useState('');
   const [nombreEditado, setNombreEditado] = useState('');
@@ -38,8 +39,37 @@ function App({ modoSecretaria = false, onEntregaCreada }) {
     });
   }, [modoSecretaria]);
 
-  // Función para cargar clientes únicos
+  // Función para cargar clientes (persistentes)
+  // 🔸 Preferimos la tabla "clientes" (lista estable en el tiempo).
+  // 🔸 Si no existe aún, hacemos fallback a "recepciones" para no romper la app.
   const cargarClientes = async () => {
+    // 1) Intentar desde tabla clientes
+    try {
+      const { data: dataClientes, error: errClientes } = await supabase
+        .from('clientes')
+        .select('nombre, telefono')
+        .order('nombre', { ascending: true });
+
+      if (!errClientes && dataClientes) {
+        const nombres = dataClientes
+          .map((c) => (c.nombre || '').trim())
+          .filter(Boolean);
+
+        const telMap = {};
+        (dataClientes || []).forEach((c) => {
+          const n = (c.nombre || '').trim();
+          if (n) telMap[n] = c.telefono || '';
+        });
+
+        setClientesRegistrados(nombres);
+        setClientesTelefonos(telMap);
+        return;
+      }
+    } catch (e) {
+      // si la tabla no existe o falla, seguimos al fallback
+    }
+
+    // 2) Fallback: clientes únicos desde recepciones (puede fallar si hay RLS por fecha)
     const { data, error } = await supabase
       .from('recepciones')
       .select('cliente_nombre')
@@ -55,6 +85,7 @@ function App({ modoSecretaria = false, onEntregaCreada }) {
         ),
       ];
       setClientesRegistrados(unicos);
+      setClientesTelefonos({});
     }
   };
 
@@ -107,6 +138,13 @@ function App({ modoSecretaria = false, onEntregaCreada }) {
       return;
     }
 
+    // También eliminar de la tabla clientes (si existe)
+    try {
+      await supabase.from('clientes').delete().eq('nombre', cliente);
+    } catch (e) {
+      // ignorar si no existe
+    }
+
     setMensaje('✅ Cliente eliminado correctamente.');
     setCliente('');
     setClienteNuevo('');
@@ -156,6 +194,16 @@ function App({ modoSecretaria = false, onEntregaCreada }) {
       return;
     }
 
+    // También renombrar en tabla clientes (si existe)
+    try {
+      await supabase
+        .from('clientes')
+        .update({ nombre: nuevoNombre })
+        .eq('nombre', cliente);
+    } catch (e) {
+      // ignorar si no existe
+    }
+
     setMensaje('✅ Nombre de cliente actualizado correctamente.');
     setCliente(nuevoNombre);
     await cargarClientes();
@@ -201,6 +249,21 @@ function App({ modoSecretaria = false, onEntregaCreada }) {
       if (telefonoNuevo && !/^\d{10}$/.test(telefonoNuevo)) {
         setMensaje('❌ El número de teléfono debe tener exactamente 10 dígitos.');
         return;
+      }
+
+      // Guardar también en tabla "clientes" (si existe) para que aparezca siempre en el selector
+      try {
+        const payload = {
+          nombre: nombreClienteFinal,
+          telefono: telefonoNuevo ? telefonoNuevo : null,
+        };
+        const { error: errCli } = await supabase.from('clientes').insert([payload]);
+        // Si ya existía por race condition, no detenemos el flujo
+        if (errCli && !String(errCli.message || '').toLowerCase().includes('duplicate')) {
+          console.warn('No se pudo guardar en clientes:', errCli.message);
+        }
+      } catch (e) {
+        // si no existe la tabla, ignoramos
       }
     }
 

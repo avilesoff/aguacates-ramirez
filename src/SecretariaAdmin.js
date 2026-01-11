@@ -64,23 +64,23 @@ export default function SecretariaAdmin() {
     return Array.from(set).sort();
   }, [revisoresPorVenta]);
 
-  // 👉 Separar ventas en PENDIENTES y REVISADAS (ordenadas por fecha desc.)
+  // 👉 Separar ventas en PENDIENTES (por usuario) y REVISADAS (por usuario) (ordenadas por fecha desc.)
 const ventasPendientes = useMemo(
   () =>
     (ventas || [])
-      // Pendiente = sin ningún revisor aún
-      .filter((v) => (revisoresPorVenta[v.id] || []).length === 0)
+      // Pendiente (por usuario) = el usuario actual NO la ha revisado
+      .filter((v) => !ventasRevisadas[v.id])
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)),
-  [ventas, revisoresPorVenta]
+  [ventas, revisoresPorVenta, ventasRevisadas]
 );
 
 
   const ventasRevisadasSolo = useMemo(
     () =>
       (ventas || [])
-        .filter((v) => (revisoresPorVenta[v.id] || []).length > 0)
+        .filter((v) => !!ventasRevisadas[v.id])
         .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)),
-    [ventas, revisoresPorVenta]
+    [ventas, revisoresPorVenta, ventasRevisadas]
   );
 
   const money = (n) =>
@@ -1043,10 +1043,10 @@ const ventasPendientes = useMemo(
           borderRadius: '999px',
           fontSize: '0.75rem',
           color: '#fff',
-          backgroundColor: revisadaPorAlguien ? '#2e7d32' : '#f9a825',
+          backgroundColor: revisadaPorAlguien ? '#1565c0' : '#f9a825',
         }}
       >
-        {revisadaPorAlguien ? 'Revisada' : 'Pendiente'}
+        {revisadaPorAlguien ? 'Revisada por otro' : 'Pendiente'}
       </span>
     );
   })()}
