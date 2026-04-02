@@ -482,39 +482,55 @@ const ventasPendientes = useMemo(
       y += 10;
     }
 
-    const anticiposArr = getAnticiposArray(venta);
-    const anticipoTotal = anticiposArr.reduce((a, b) => a + b, 0);
-    const saldo = totalGeneralImporte - anticipoTotal;
+// === RESUMEN DE SALDOS ===
+// === RESUMEN DE SALDOS (SIN DETALLE) ===
+const anticiposArr = getAnticiposArray(venta);
+const anticipoTotal = anticiposArr.reduce((a, b) => a + b, 0);
+const saldo = totalGeneralImporte - anticipoTotal;
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
-    doc.text(
-      `Total General: ${money(totalGeneralImporte)}`,
-      pageW - margin,
-      y + 4,
-      { align: 'right' }
-    );
+y += 6;
 
-   if (anticipoTotal > 0) {
-  const label = anticipoLabel(venta);
+// Línea separadora
+doc.setDrawColor(200);
+doc.setLineWidth(0.3);
+doc.line(margin, y, pageW - margin, y);
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  doc.text(`${label}:`, pageW - margin, y + 10, { align: 'right' });
+y += 6;
 
-  doc.setFontSize(10);
-  let yy = y + 16;
+// Título del bloque
+doc.setFont('helvetica', 'bold');
+doc.setFontSize(11);
+doc.text('Resumen de saldos', margin, y);
 
-  anticiposArr.forEach((val, idx) => {
-    doc.text(`${idx + 1}.- ${money(val)}`, pageW - margin, yy, { align: 'right' });
-    yy += 6;
-  });
+y += 6;
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(`Total ${label}: ${money(anticipoTotal)}`, pageW - margin, yy + 2, { align: 'right' });
-  doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, yy + 10, { align: 'right' });
-}
+const label = anticipoLabel(venta); // "Anticipo" o "Saldo anterior"
+
+doc.setFont('helvetica', 'normal');
+doc.setFontSize(10);
+
+// Total general
+doc.text('Total general:', margin, y);
+doc.setFont('helvetica', 'bold');
+doc.text(money(totalGeneralImporte), pageW - margin, y, { align: 'right' });
+
+y += 6;
+
+// Total anticipo/saldo anterior
+doc.setFont('helvetica', 'normal');
+doc.text(`Total ${label.toLowerCase()}:`, margin, y);
+doc.setFont('helvetica', 'bold');
+doc.text(money(anticipoTotal), pageW - margin, y, { align: 'right' });
+
+y += 7;
+
+// Saldo pendiente destacado
+doc.setFont('helvetica', 'bold');
+doc.setFontSize(12);
+doc.text('Saldo pendiente:', margin, y);
+doc.text(money(saldo), pageW - margin, y, { align: 'right' });
+
+y += 4;
 
     const pageCount = doc.getNumberOfPages();
     const fechaHoy = fmtFecha(new Date());
