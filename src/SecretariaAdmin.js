@@ -85,6 +85,36 @@ const ventasPendientes = useMemo(
 
   const money = (n) =>
     new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(n || 0));
+    // ---- Anticipos (hasta 5) + tipo (anticipo / saldo anterior) ----
+  const getAnticiposArray = (venta) => {
+    let arr = [];
+
+    if (Array.isArray(venta?.anticipos)) {
+      arr = venta.anticipos;
+    } else if (typeof venta?.anticipos === 'string' && venta.anticipos.trim()) {
+      try { arr = JSON.parse(venta.anticipos); } catch { arr = []; }
+    }
+
+    arr = (arr || [])
+      .map((x) => Number(x) || 0)
+      .filter((x) => x > 0)
+      .slice(0, 5);
+
+    // compatibilidad: si no hay anticipos, usa el campo viejo "anticipo"
+    if (!arr.length) {
+      const old = Number(venta?.anticipo) || 0;
+      if (old > 0) arr = [old];
+    }
+
+    return arr;
+  };
+
+  const sumAnticipos = (venta) => getAnticiposArray(venta).reduce((a, b) => a + b, 0);
+
+  const anticipoLabel = (venta) => {
+    const t = String(venta?.anticipo_tipo || 'anticipo').toLowerCase();
+    return t === 'saldo_anterior' ? 'Saldo anterior' : 'Anticipo';
+  };
 
   const fmtFolio = (n) => String(n ?? '').toString().padStart(4, '0');
 
@@ -342,11 +372,11 @@ const ventasPendientes = useMemo(
       { align: 'right' }
     );
 
-    const boxIcon = await loadImageAsDataURL('/icons/box.jpg');
-    const kgIcon = await loadImageAsDataURL('/icons/kg.png');
+    const kgIcon = await loadImageForJsPDF('/icons/kg.png');
+    const boxIcon = await loadImageForJsPDF('/icons/box.jpg');
 
-    if (kgIcon) doc.addImage(kgIcon, 'PNG', panelX + 5, panelY + 2, 12, 12);
-    if (boxIcon) doc.addImage(boxIcon, 'JPG', panelX + 5, panelY + 13, 12, 12);
+    if (kgIcon) doc.addImage(kgIcon.dataUrl, kgIcon.format, panelX + 5, panelY + 2, 12, 12);
+    if (boxIcon) doc.addImage(boxIcon.dataUrl, boxIcon.format, panelX + 5, panelY + 13, 12, 12);
 
     y = panelY + panelH + 10;
 
@@ -452,8 +482,9 @@ const ventasPendientes = useMemo(
       y += 10;
     }
 
-    const anticipo = parseFloat(venta.anticipo || 0);
-    const saldo = totalGeneralImporte - anticipo;
+    const anticiposArr = getAnticiposArray(venta);
+    const anticipoTotal = anticiposArr.reduce((a, b) => a + b, 0);
+    const saldo = totalGeneralImporte - anticipoTotal;
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
@@ -464,17 +495,26 @@ const ventasPendientes = useMemo(
       { align: 'right' }
     );
 
-    if (anticipo > 0) {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(11);
-      doc.text(`Anticipo: ${money(anticipo)}`, pageW - margin, y + 10, {
-        align: 'right',
-      });
-      doc.setFont('helvetica', 'bold');
-      doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, y + 16, {
-        align: 'right',
-      });
-    }
+   if (anticipoTotal > 0) {
+  const label = anticipoLabel(venta);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.text(`${label}:`, pageW - margin, y + 10, { align: 'right' });
+
+  doc.setFontSize(10);
+  let yy = y + 16;
+
+  anticiposArr.forEach((val, idx) => {
+    doc.text(`${idx + 1}.- ${money(val)}`, pageW - margin, yy, { align: 'right' });
+    yy += 6;
+  });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(`Total ${label}: ${money(anticipoTotal)}`, pageW - margin, yy + 2, { align: 'right' });
+  doc.text(`Saldo Pendiente: ${money(saldo)}`, pageW - margin, yy + 10, { align: 'right' });
+}
 
     const pageCount = doc.getNumberOfPages();
     const fechaHoy = fmtFecha(new Date());
@@ -1027,7 +1067,7 @@ const ventasPendientes = useMemo(
                             v.nombre_cliente
                           )}
                         </td>
-                        <td style={{ ...td, textAlign: 'right' }}>{money(v.anticipo || 0)}</td>
+                        <td style={{ ...td, textAlign: 'right' }}>{money(sumAnticipos(v))}</td>
                         <td style={{ ...td, textAlign: 'right' }}>{money(v.total || 0)}</td>
 
                         {/* Estado para usuario actual */}

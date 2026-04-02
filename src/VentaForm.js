@@ -15,7 +15,7 @@ function hoyLocalYMD() {
 export default function VentaForm({
   modoSecretaria = false,
   clasificacionIdInicial = null, // entrega_id que viene de ClasificacionEntrega
-  entregaResumen = null,        // opcional, por si luego quieres mostrar resumen
+  entregaResumen = null, // opcional, por si luego quieres mostrar resumen
 }) {
   const navigate = useNavigate();
 
@@ -25,12 +25,13 @@ export default function VentaForm({
     fecha: hoyLocalYMD(), // ahora es fecha local
   });
 
-  const [anticipo, setAnticipo] = useState('');
+  const [anticipoTipo, setAnticipoTipo] = useState('anticipo'); // 'anticipo' | 'saldo_anterior'
+  const [anticipos, setAnticipos] = useState(['', '', '', '', '']); // hasta 5 montos
+
   const [productosPorTipo, setProductosPorTipo] = useState({});
   const [mensaje, setMensaje] = useState('');
   const [clasificaciones, setClasificaciones] = useState([]);
-  const [clasificacionSeleccionada, setClasificacionSeleccionada] =
-    useState('');
+  const [clasificacionSeleccionada, setClasificacionSeleccionada] = useState('');
   const [recepcionesConVenta, setRecepcionesConVenta] = useState(new Set());
 
   // Opciones para el select de descripción
@@ -56,6 +57,18 @@ export default function VentaForm({
     return `${dd}/${mm}/${yyyy}`;
   };
 
+  // ---- Anticipos (hasta 5) ----
+  const limpiarMonto = (v) => {
+    if (v === '' || v == null) return '';
+    return String(v).replace(/[^\d.]/g, '');
+  };
+
+  const anticiposNumeros = (anticipos || [])
+    .map((x) => Number(x) || 0)
+    .map((n) => (n > 0 ? n : 0));
+
+  const anticipoTotal = anticiposNumeros.reduce((a, b) => a + b, 0);
+
   // ------------ Helpers de carga/refresco ------------
   const refetchVentas = async () => {
     const { data: ven, error: errVen } = await supabase
@@ -66,8 +79,7 @@ export default function VentaForm({
       const setIds = new Set();
       for (const v of ven || []) {
         if (v.recepcion_id != null) setIds.add(String(v.recepcion_id));
-        if (v.clasificacion_entrega_id)
-          setIds.add(String(v.clasificacion_entrega_id));
+        if (v.clasificacion_entrega_id) setIds.add(String(v.clasificacion_entrega_id));
       }
       setRecepcionesConVenta(setIds);
     }
@@ -127,9 +139,7 @@ export default function VentaForm({
       return;
     }
 
-    const seleccionada = clasificaciones.find(
-      (c) => String(c.recepcion_id) === String(idStr)
-    );
+    const seleccionada = clasificaciones.find((c) => String(c.recepcion_id) === String(idStr));
     if (!seleccionada) {
       setMensaje('❌ No se encontró la clasificación seleccionada.');
       return;
@@ -151,10 +161,7 @@ export default function VentaForm({
       .eq('entrega_id', idStr);
 
     if (error) {
-      console.error(
-        'Error cargando detalles de clasificacion:',
-        error.message
-      );
+      console.error('Error cargando detalles de clasificacion:', error.message);
       setMensaje('❌ Error al cargar la clasificación.');
       return;
     }
@@ -173,8 +180,7 @@ export default function VentaForm({
       const cajas = parseFloat(reg.cajas) || 0;
 
       if (!porTipo[tipo]) porTipo[tipo] = {};
-      if (!porTipo[tipo][calibre])
-        porTipo[tipo][calibre] = { kg: 0, cajas: 0 };
+      if (!porTipo[tipo][calibre]) porTipo[tipo][calibre] = { kg: 0, cajas: 0 };
 
       porTipo[tipo][calibre].kg += kilos;
       porTipo[tipo][calibre].cajas += cajas;
@@ -182,16 +188,14 @@ export default function VentaForm({
 
     const resultado = {};
     Object.keys(porTipo).forEach((tipo) => {
-      resultado[tipo] = Object.entries(porTipo[tipo]).map(
-        ([descripcion, agg], i) => ({
-          id: `${idStr}-${tipo}-${i}`,
-          cantidad: agg.kg, // kilos
-          cajas: agg.cajas, // total de cajas por calibre
-          descripcion,
-          precio: '',
-          importe: 0,
-        })
-      );
+      resultado[tipo] = Object.entries(porTipo[tipo]).map(([descripcion, agg], i) => ({
+        id: `${idStr}-${tipo}-${i}`,
+        cantidad: agg.kg, // kilos
+        cajas: agg.cajas, // total de cajas por calibre
+        descripcion,
+        precio: '',
+        importe: 0,
+      }));
     });
 
     setProductosPorTipo(resultado);
@@ -240,9 +244,7 @@ export default function VentaForm({
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const recId = clasificacionSeleccionada
-      ? String(clasificacionSeleccionada)
-      : null;
+    const recId = clasificacionSeleccionada ? String(clasificacionSeleccionada) : null;
     const esNumerico = recId && /^\d+$/.test(recId);
     const recepcionIdParaInsert = esNumerico ? Number(recId) : null;
 
@@ -253,12 +255,10 @@ export default function VentaForm({
             const cantidadNum = parseFloat(p.cantidad);
             const precioNum = parseFloat(p.precio);
 
-            const esCantidadValida =
-              !Number.isNaN(cantidadNum) && cantidadNum > 0;
+            const esCantidadValida = !Number.isNaN(cantidadNum) && cantidadNum > 0;
             const esPrecioValido = !Number.isNaN(precioNum) && precioNum >= 0; // permite 0
 
-            if (!p.descripcion || !esCantidadValida || !esPrecioValido)
-              return null;
+            if (!p.descripcion || !esCantidadValida || !esPrecioValido) return null;
 
             return {
               tipo: p.descripcion,
@@ -274,15 +274,11 @@ export default function VentaForm({
       );
 
     if (filasValidas.length === 0) {
-      setMensaje(
-        '❌ Debes ingresar al menos un producto con cantidad, descripción y precio.'
-      );
+      setMensaje('❌ Debes ingresar al menos un producto con cantidad, descripción y precio.');
       return;
     }
 
-    const { data: resultado, error: errorNota } = await supabase.rpc(
-      'generar_numero_nota'
-    );
+    const { data: resultado, error: errorNota } = await supabase.rpc('generar_numero_nota');
     if (errorNota || !resultado) {
       setMensaje('❌ Error al generar número de nota.');
       return;
@@ -296,7 +292,9 @@ export default function VentaForm({
       nombre_cliente: datosCliente.nombre,
       productos: filasValidas,
       total: filasValidas.reduce((sum, p) => sum + p.importe, 0),
-      anticipo: anticipo === '' ? 0 : parseFloat(anticipo) || 0,
+      anticipo: anticipoTotal, // compat: total de anticipos
+      anticipo_tipo: anticipoTipo,
+      anticipos: anticiposNumeros.filter((n) => n > 0).slice(0, 5),
     };
 
     const payloadConUUID = {
@@ -306,23 +304,17 @@ export default function VentaForm({
 
     let errorGuardar;
     try {
-      ({ error: errorGuardar } = await supabase
-        .from('ventas')
-        .insert(payloadConUUID));
+      ({ error: errorGuardar } = await supabase.from('ventas').insert(payloadConUUID));
       if (errorGuardar && errorGuardar.code === '42703') {
         // si no existe la columna, reintenta sin ella
-        ({ error: errorGuardar } = await supabase
-          .from('ventas')
-          .insert(payloadBase));
+        ({ error: errorGuardar } = await supabase.from('ventas').insert(payloadBase));
       }
     } catch (e2) {
       errorGuardar = e2;
     }
 
     if (errorGuardar) {
-      setMensaje(
-        '❌ Error al guardar: ' + (errorGuardar.message || errorGuardar)
-      );
+      setMensaje('❌ Error al guardar: ' + (errorGuardar.message || errorGuardar));
     } else {
       // 1) Ocúltala de inmediato en la UI
       if (recId) {
@@ -335,10 +327,9 @@ export default function VentaForm({
       // 2) Refresca ventas desde la BD para recalcular el set (por si hay cambios/UUID)
       await refetchVentas();
 
-      setMensaje(
-        `✅ Compra guardada correctamente con nota #${numeroNota}`
-      );
-      setAnticipo('');
+      setMensaje(`✅ Compra guardada correctamente con nota #${numeroNota}`);
+      setAnticipos(['', '', '', '', '']);
+      setAnticipoTipo('anticipo');
       setProductosPorTipo({});
       setClasificacionSeleccionada('');
     }
@@ -356,35 +347,19 @@ export default function VentaForm({
   });
 
   return (
-    <div
-      style={{
-        padding: '2rem',
-        maxWidth: '900px',
-        margin: 'auto',
-        fontFamily: 'Arial',
-      }}
-    >
+    <div style={{ padding: '2rem', maxWidth: '900px', margin: 'auto', fontFamily: 'Arial' }}>
       <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-        <img
-          src="/aguacate.jpg"
-          alt="Logo"
-          style={{ width: '80px', marginBottom: '1rem' }}
-        />
+        <img src="/aguacate.jpg" alt="Logo" style={{ width: '80px', marginBottom: '1rem' }} />
         <h2 style={{ margin: 0, color: '#2e7d32' }}>
           Aguacates <span style={{ fontWeight: 'bold' }}>Ramírez</span>
         </h2>
         <p style={{ margin: '0.3rem 0' }}>
-          <strong>Registro SAGARPA:</strong>{' '}
-          <span style={{ color: '#333' }}>EMP0416058459/2021</span>
+          <strong>Registro SAGARPA:</strong> <span style={{ color: '#333' }}>EMP0416058459/2021</span>
         </p>
-        <p style={{ margin: 0 }}>
-          Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro
-        </p>
+        <p style={{ margin: 0 }}>Prolongación Linda Vista Carr. San Juan Nuevo - Tancítaro</p>
       </div>
 
-      <h3 style={{ textAlign: 'center', color: '#2e7d32' }}>
-        Registro de Compra
-      </h3>
+      <h3 style={{ textAlign: 'center', color: '#2e7d32' }}>Registro de Compra</h3>
 
       {/* BOTONES SUPERIORES (solo modo normal) */}
       {!modoSecretaria && (
@@ -397,22 +372,13 @@ export default function VentaForm({
             flexWrap: 'wrap',
           }}
         >
-          <button
-            onClick={() => navigate('/recepcion')}
-            style={botonRecepcion}
-          >
+          <button onClick={() => navigate('/recepcion')} style={botonRecepcion}>
             📥 Recepción
           </button>
-          <button
-            onClick={() => navigate('/clasificacion-entrega')}
-            style={botonClasificacion}
-          >
+          <button onClick={() => navigate('/clasificacion-entrega')} style={botonClasificacion}>
             📦 Clasificación
           </button>
-          <button
-            onClick={() => navigate('/secretaria')}
-            style={botonSecretaria}
-          >
+          <button onClick={() => navigate('/secretaria')} style={botonSecretaria}>
             📁 Secretaría
           </button>
           <button onClick={handleLogout} style={botonCerrarSesion}>
@@ -426,17 +392,11 @@ export default function VentaForm({
           <label>
             <strong>Seleccionar clasificación:</strong>
           </label>
-          <select
-            onChange={handleSeleccionClasificacion}
-            style={inputEstilo}
-            value={clasificacionSeleccionada}
-          >
+          <select onChange={handleSeleccionClasificacion} style={inputEstilo} value={clasificacionSeleccionada}>
             <option value="">-- Elige una clasificación --</option>
             {clasificacionesPendientes.map((c) => {
               const id = String(c.recepcion_id);
-              const label = `${fmtFecha(c.fecha)} - ${
-                c.cliente_nombre
-              } (${(c.total_kg || 0).toLocaleString()} kg)`;
+              const label = `${fmtFecha(c.fecha)} - ${c.cliente_nombre} (${(c.total_kg || 0).toLocaleString()} kg)`;
               return (
                 <option key={id} value={id}>
                   {label}
@@ -445,9 +405,7 @@ export default function VentaForm({
             })}
           </select>
           {clasificacionesPendientes.length === 0 && (
-            <small style={{ color: '#777' }}>
-              No hay clasificaciones pendientes de compra.
-            </small>
+            <small style={{ color: '#777' }}>No hay clasificaciones pendientes de compra.</small>
           )}
         </div>
 
@@ -457,12 +415,7 @@ export default function VentaForm({
             name="nombre"
             placeholder="Nombre"
             value={datosCliente.nombre}
-            onChange={(e) =>
-              setDatosCliente({
-                ...datosCliente,
-                nombre: e.target.value,
-              })
-            }
+            onChange={(e) => setDatosCliente({ ...datosCliente, nombre: e.target.value })}
             style={inputEstilo}
             required
           />
@@ -470,12 +423,7 @@ export default function VentaForm({
             type="date"
             name="fecha"
             value={datosCliente.fecha}
-            onChange={(e) =>
-              setDatosCliente({
-                ...datosCliente,
-                fecha: e.target.value,
-              })
-            }
+            onChange={(e) => setDatosCliente({ ...datosCliente, fecha: e.target.value })}
             style={inputEstilo}
             required
           />
@@ -483,29 +431,63 @@ export default function VentaForm({
 
         <div style={{ marginTop: '1rem' }}>
           <label>
-            <strong>Anticipo ($):</strong>
+            <strong>Tipo:</strong>
           </label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={anticipo}
-            onChange={(e) => setAnticipo(e.target.value)}
-            style={inputEstilo}
-            placeholder="Ingrese monto del anticipo (opcional)"
-          />
+          <select
+            value={anticipoTipo}
+            onChange={(e) => setAnticipoTipo(e.target.value)}
+            style={{ ...inputEstilo, marginTop: 6 }}
+          >
+            <option value="anticipo">Anticipo</option>
+            <option value="saldo_anterior">Saldo anterior</option>
+          </select>
+
+          <div style={{ marginTop: 10 }}>
+            <label>
+              <strong>Montos (hasta 5):</strong>
+            </label>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                gap: 10,
+                marginTop: 8,
+              }}
+            >
+              {anticipos.map((val, idx) => (
+                <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ fontSize: '0.85rem', color: '#555' }}>{idx + 1}.-</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={val}
+                    onChange={(e) => {
+                      const v = limpiarMonto(e.target.value);
+                      setAnticipos((prev) => {
+                        const next = [...prev];
+                        next[idx] = v;
+                        return next;
+                      });
+                    }}
+                    style={inputEstilo}
+                    placeholder="0.00"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 10, textAlign: 'right', fontWeight: 'bold' }}>
+              Total {anticipoTipo === 'saldo_anterior' ? 'Saldo anterior' : 'Anticipo'}: ${anticipoTotal.toFixed(2)}
+            </div>
+          </div>
         </div>
 
         {Object.keys(productosPorTipo).map((tipo) => (
           <div key={tipo} style={{ marginTop: '2rem' }}>
             <h4 style={{ color: '#2e7d32' }}>{tipo}</h4>
-            <table
-              style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                marginTop: '0.5rem',
-              }}
-            >
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.5rem' }}>
               <thead>
                 <tr style={{ backgroundColor: '#eee' }}>
                   <th>Cajas</th>
@@ -519,23 +501,14 @@ export default function VentaForm({
                 {productosPorTipo[tipo].map((p, index) => (
                   <tr key={p.id}>
                     {/* Cajas (solo lectura) */}
-                    <td style={{ textAlign: 'right' }}>
-                      {Number(p.cajas || 0).toLocaleString()}
-                    </td>
+                    <td style={{ textAlign: 'right' }}>{Number(p.cajas || 0).toLocaleString()}</td>
 
                     {/* Kilos (editable) */}
                     <td>
                       <input
                         type="number"
                         value={p.cantidad}
-                        onChange={(e) =>
-                          handleCambioProducto(
-                            tipo,
-                            index,
-                            'cantidad',
-                            e.target.value
-                          )
-                        }
+                        onChange={(e) => handleCambioProducto(tipo, index, 'cantidad', e.target.value)}
                         style={inputTabla}
                       />
                     </td>
@@ -544,23 +517,13 @@ export default function VentaForm({
                     <td>
                       <select
                         value={p.descripcion || ''}
-                        onChange={(e) =>
-                          handleCambioProducto(
-                            tipo,
-                            index,
-                            'descripcion',
-                            e.target.value
-                          )
-                        }
+                        onChange={(e) => handleCambioProducto(tipo, index, 'descripcion', e.target.value)}
                         style={selectTabla}
                       >
                         <option value="">Selecciona</option>
-                        {!OPCIONES_CALIBRE.includes(p.descripcion) &&
-                          p.descripcion && (
-                            <option value={p.descripcion}>
-                              {p.descripcion}
-                            </option>
-                          )}
+                        {!OPCIONES_CALIBRE.includes(p.descripcion) && p.descripcion && (
+                          <option value={p.descripcion}>{p.descripcion}</option>
+                        )}
                         {OPCIONES_CALIBRE.map((op) => (
                           <option key={op} value={op}>
                             {op}
@@ -574,22 +537,13 @@ export default function VentaForm({
                       <input
                         type="number"
                         value={p.precio}
-                        onChange={(e) =>
-                          handleCambioProducto(
-                            tipo,
-                            index,
-                            'precio',
-                            e.target.value
-                          )
-                        }
+                        onChange={(e) => handleCambioProducto(tipo, index, 'precio', e.target.value)}
                         style={inputTabla}
                       />
                     </td>
 
                     {/* Importe */}
-                    <td style={{ textAlign: 'right' }}>
-                      {p.importe.toFixed(2)}
-                    </td>
+                    <td style={{ textAlign: 'right' }}>{p.importe.toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -597,9 +551,7 @@ export default function VentaForm({
           </div>
         ))}
 
-        <h3 style={{ textAlign: 'right', marginTop: '1rem' }}>
-          Total General: ${totalGeneral.toFixed(2)}
-        </h3>
+        <h3 style={{ textAlign: 'right', marginTop: '1rem' }}>Total General: ${totalGeneral.toFixed(2)}</h3>
 
         <button type="submit" style={botonPrincipal}>
           Guardar compra
@@ -607,13 +559,7 @@ export default function VentaForm({
       </form>
 
       {mensaje && (
-        <p
-          style={{
-            marginTop: '1rem',
-            textAlign: 'center',
-            color: mensaje.includes('❌') ? 'red' : 'green',
-          }}
-        >
+        <p style={{ marginTop: '1rem', textAlign: 'center', color: mensaje.includes('❌') ? 'red' : 'green' }}>
           {mensaje}
         </p>
       )}
