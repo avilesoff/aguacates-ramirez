@@ -85,36 +85,50 @@ const ventasPendientes = useMemo(
 
   const money = (n) =>
     new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(n || 0));
-    // ---- Anticipos (hasta 5) + tipo (anticipo / saldo anterior) ----
-  const getAnticiposArray = (venta) => {
-    let arr = [];
+  // ---- Saldos separados: saldo anterior + anticipo ----
+const getArrayMontos = (value) => {
+  let arr = [];
 
-    if (Array.isArray(venta?.anticipos)) {
-      arr = venta.anticipos;
-    } else if (typeof venta?.anticipos === 'string' && venta.anticipos.trim()) {
-      try { arr = JSON.parse(venta.anticipos); } catch { arr = []; }
+  if (Array.isArray(value)) {
+    arr = value;
+  } else if (typeof value === 'string' && value.trim()) {
+    try {
+      arr = JSON.parse(value);
+    } catch {
+      arr = [];
     }
+  }
 
-    arr = (arr || [])
-      .map((x) => Number(x) || 0)
-      .filter((x) => x > 0)
-      .slice(0, 5);
+  return (arr || [])
+    .map((x) => Number(x) || 0)
+    .filter((x) => x > 0)
+    .slice(0, 5);
+};
 
-    // compatibilidad: si no hay anticipos, usa el campo viejo "anticipo"
-    if (!arr.length) {
-      const old = Number(venta?.anticipo) || 0;
-      if (old > 0) arr = [old];
-    }
+const getSaldoAnteriorArray = (venta) => {
+  const arr = getArrayMontos(venta?.saldo_anterior_montos);
+  if (arr.length) return arr;
 
-    return arr;
-  };
+  const old = Number(venta?.saldo_anterior_total) || 0;
+  return old > 0 ? [old] : [];
+};
 
-  const sumAnticipos = (venta) => getAnticiposArray(venta).reduce((a, b) => a + b, 0);
+const getAnticipoArray = (venta) => {
+  const arr = getArrayMontos(venta?.anticipo_montos);
+  if (arr.length) return arr;
 
-  const anticipoLabel = (venta) => {
-    const t = String(venta?.anticipo_tipo || 'anticipo').toLowerCase();
-    return t === 'saldo_anterior' ? 'Saldo anterior' : 'Anticipo';
-  };
+  const old = Number(venta?.anticipo_total) || 0;
+  return old > 0 ? [old] : [];
+};
+
+const getSaldoAnteriorTotal = (venta) =>
+  getSaldoAnteriorArray(venta).reduce((a, b) => a + b, 0);
+
+const getAnticipoTotal = (venta) =>
+  getAnticipoArray(venta).reduce((a, b) => a + b, 0);
+
+const sumAnticipos = (venta) =>
+  getSaldoAnteriorTotal(venta) + getAnticipoTotal(venta);
 
   const fmtFolio = (n) => String(n ?? '').toString().padStart(4, '0');
 
@@ -332,53 +346,53 @@ const ventasPendientes = useMemo(
     doc.text(`Fecha: ${fmtFecha(venta.fecha)}`, boxX + 3, boxY + 12);
 
     // Datos cliente
-    let y = Math.max(logoY + logoH + 12, boxY + boxH + 12);
+    let y = Math.max(logoY + logoH + 10, boxY + boxH + 10);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.text('Datos del cliente', margin, y);
-    y += 10;
+    y += 8;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     doc.text(`Cliente: ${venta.nombre_cliente}`, margin, y);
-    y += 10;
+    y += 4;
 
     // Tarjeta de recibidos
-    const panelW = 72;
-    const panelH = 28;
+    const panelW = 68;
+    const panelH = 20;
     const panelX = pageW - margin - panelW;
-    const panelY = y - 10;
+    const panelY = y - 8;
 
     doc.setDrawColor(46, 125, 50);
     doc.setLineWidth(0.4);
     doc.rect(panelX, panelY, panelW, panelH);
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
-    doc.text('Kilos recibidos', panelX + 20, panelY + 9);
-    doc.text('Cajas recibidas', panelX + 20, panelY + 20);
+    doc.setFontSize(8.5);
+    doc.text('Kilos recibidos', panelX + 17, panelY + 7);
+    doc.text('Cajas recibidas', panelX + 17, panelY + 15);
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.text(
       (panelKg || 0).toLocaleString(),
-      panelX + panelW - 4,
-      panelY + 9,
+      panelX + panelW - 3,
+      panelY + 7,
       { align: 'right' }
     );
     doc.text(
       (panelCajas || 0).toLocaleString(),
-      panelX + panelW - 4,
-      panelY + 20,
+      panelX + panelW - 3,
+      panelY + 15,
       { align: 'right' }
     );
 
     const kgIcon = await loadImageForJsPDF('/icons/kg.png');
     const boxIcon = await loadImageForJsPDF('/icons/box.jpg');
 
-    if (kgIcon) doc.addImage(kgIcon.dataUrl, kgIcon.format, panelX + 5, panelY + 2, 12, 12);
-    if (boxIcon) doc.addImage(boxIcon.dataUrl, boxIcon.format, panelX + 5, panelY + 13, 12, 12);
+    if (kgIcon) doc.addImage(kgIcon.dataUrl, kgIcon.format, panelX + 4, panelY + 1.5, 9, 9);
+    if (boxIcon) doc.addImage(boxIcon.dataUrl, boxIcon.format, panelX + 4, panelY + 10, 9, 9);
 
-    y = panelY + panelH + 10;
+    y = panelY + panelH + 6;
 
     // Detalle por tipo
     const grupos = {};
@@ -468,8 +482,7 @@ const ventasPendientes = useMemo(
         margin: { left: margin, right: margin },
       });
 
-      y = doc.lastAutoTable.finalY + 6;
-
+      y = doc.lastAutoTable.finalY + 3;
       // Subtotal ABAJO: solo dinero
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10);
@@ -479,69 +492,82 @@ const ventasPendientes = useMemo(
         y,
         { align: 'right' }
       );
-      y += 10;
+      y += 6;
     }
 
 
-// === RESUMEN DE SALDOS (SIN DETALLE) ===
-// === RESUMEN DE SALDOS (FORMATO COMPACTO, SIN CEROS) ===
-const anticiposArr = getAnticiposArray(venta);
-const anticipoTotal = anticiposArr.reduce((a, b) => a + b, 0);
-const saldo = totalGeneralImporte - anticipoTotal;
+    // === RESUMEN DE SALDOS (FORMATO COMPACTO, SIN CEROS) ===
+    const saldoAnteriorTotal = getSaldoAnteriorTotal(venta);
+    const anticipoTotal = getAnticipoTotal(venta);
 
-// Caja compacta (no de orilla a orilla)  
-const resumenW = 92;
-const resumenX = pageW - margin - resumenW;
-const resumenY = y + 6;
-const rowH = 7;
+    const totalAjustes = saldoAnteriorTotal + anticipoTotal;
+    const saldoFinal = totalGeneralImporte - totalAjustes;
 
-const label = anticipoLabel(venta).toUpperCase(); // "ANTICIPO" o "SALDO ANTERIOR"
+    const resumenW = 82;
+    const resumenX = pageW - margin - resumenW;
+    const resumenY = y + 1;
+    const rowH = 5;
 
-const filas = [
-  { label: 'TOTAL NOTA', value: totalGeneralImporte, bold: true, color: [0, 0, 0] },
-];
+    const filas = [
+      { label: 'TOTAL NOTA', value: totalGeneralImporte, bold: true },
+    ];
 
-if (anticipoTotal > 0) {
-  filas.push({ label, value: anticipoTotal, bold: false, color: [0, 0, 0] });
-  filas.push({ sep: true });
-}
+    if (saldoAnteriorTotal > 0) {
+      filas.push({ label: 'SALDO ANTERIOR', value: saldoAnteriorTotal });
+    }
 
-filas.push({ label: 'SALDO PENDIENTE', value: saldo, bold: true, color: [200, 0, 0], big: true });
+    if (anticipoTotal > 0) {
+      filas.push({ label: 'ANTICIPO', value: anticipoTotal });
+    }
 
-const resumenH =
-  filas.reduce((acc, f) => acc + (f.sep ? 3 : (f.big ? 9 : rowH)), 0) + 6;
+    if (saldoAnteriorTotal > 0 || anticipoTotal > 0) {
+      filas.push({ sep: true });
+    }
 
-doc.setDrawColor(120);
-doc.setLineWidth(0.3);
-doc.rect(resumenX, resumenY, resumenW, resumenH);
+    const esDeuda = saldoFinal >= 0;
 
-let yy = resumenY + 6;
-const leftX = resumenX + 6;
-const rightX = resumenX + resumenW - 6;
+    filas.push({
+      label: esDeuda ? 'SALDO PENDIENTE' : 'TOTAL',
+      value: Math.abs(saldoFinal),
+      bold: true,
+      color: esDeuda ? [200, 0, 0] : [0, 150, 0],
+      big: true,
+    });
 
-filas.forEach((f) => {
-  if (f.sep) {
-    doc.setDrawColor(170);
-    doc.setLineWidth(0.2);
-    doc.line(leftX, yy, rightX, yy);
-    yy += 5;
-    return;
-  }
+   const resumenH =
+    filas.reduce((acc, f) => acc + (f.sep ? 1.5 : (f.big ? 6.5 : rowH)), 0) + 4;
 
-  const [r, g, b] = f.color || [0, 0, 0];
-  doc.setTextColor(r, g, b);
+    doc.setDrawColor(120);
+    doc.setLineWidth(0.25);
+    doc.rect(resumenX, resumenY, resumenW, resumenH);
 
-  doc.setFont('helvetica', f.bold ? 'bold' : 'normal');
-  doc.setFontSize(f.big ? 12 : 10);
+    let yy = resumenY + 4;
+    const leftX = resumenX + 4.5;
+    const rightX = resumenX + resumenW - 4.5;
 
-  doc.text(`${f.label}:`, leftX, yy);
-  doc.text(money(f.value), rightX, yy, { align: 'right' });
+    filas.forEach((f) => {
+      if (f.sep) {
+      doc.setDrawColor(170);
+      doc.setLineWidth(0.2);
+      doc.line(leftX, yy, rightX, yy);
+      yy += 4;
+      return;
+    }
 
-  yy += f.big ? 9 : rowH;
-});
+    const [r, g, b] = f.color || [0, 0, 0];
+    doc.setTextColor(r, g, b);
 
-doc.setTextColor(0, 0, 0);
-y = resumenY + resumenH + 8;
+    doc.setFont('helvetica', f.bold ? 'bold' : 'normal');
+    doc.setFontSize(f.big ? 10.5 : 8.5);
+
+    doc.text(`${f.label}:`, leftX, yy);
+    doc.text(money(f.value), rightX, yy, { align: 'right' });
+
+    yy += f.big ? 6.5 : rowH;
+    });
+
+    doc.setTextColor(0, 0, 0);
+    y = resumenY + resumenH + 8;
     const pageCount = doc.getNumberOfPages();
     const fechaHoy = fmtFecha(new Date());
     for (let i = 1; i <= pageCount; i++) {
@@ -1052,7 +1078,7 @@ y = resumenY + resumenH + 8;
                     <th style={th}>Folio</th>
                     <th style={th}>Fecha</th>
                     <th style={th}>Cliente</th>
-                    <th style={th}>Anticipo</th>
+                    <th style={th}>Ajustes</th>
                     <th style={th}>Total</th>
                     <th style={th}>Estado</th>
                     <th style={th}>Revisó</th>
