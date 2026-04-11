@@ -25,8 +25,8 @@ export default function VentaForm({
     fecha: hoyLocalYMD(), // ahora es fecha local
   });
 
-  const [anticipoTipo, setAnticipoTipo] = useState('anticipo'); // 'anticipo' | 'saldo_anterior'
-  const [anticipos, setAnticipos] = useState(['', '', '', '', '']); // hasta 5 montos
+  const [anticipoMontos, setAnticipoMontos] = useState(['', '', '', '', '']);
+  const [saldoAnteriorMontos, setSaldoAnteriorMontos] = useState(['', '', '', '', '']);
 
   const [productosPorTipo, setProductosPorTipo] = useState({});
   const [mensaje, setMensaje] = useState('');
@@ -63,11 +63,16 @@ export default function VentaForm({
     return String(v).replace(/[^\d.]/g, '');
   };
 
-  const anticiposNumeros = (anticipos || [])
-    .map((x) => Number(x) || 0)
-    .map((n) => (n > 0 ? n : 0));
+  const anticipoNumeros = (anticipoMontos || [])
+  .map((x) => Number(x) || 0)
+  .map((n) => (n > 0 ? n : 0));
 
-  const anticipoTotal = anticiposNumeros.reduce((a, b) => a + b, 0);
+  const saldoAnteriorNumeros = (saldoAnteriorMontos || [])
+  .map((x) => Number(x) || 0)
+  .map((n) => (n > 0 ? n : 0));
+
+  const anticipoTotal = anticipoNumeros.reduce((a, b) => a + b, 0);
+  const saldoAnteriorTotal = saldoAnteriorNumeros.reduce((a, b) => a + b, 0);
 
   // ------------ Helpers de carga/refresco ------------
   const refetchVentas = async () => {
@@ -292,9 +297,11 @@ export default function VentaForm({
       nombre_cliente: datosCliente.nombre,
       productos: filasValidas,
       total: filasValidas.reduce((sum, p) => sum + p.importe, 0),
-      anticipo: anticipoTotal, // compat: total de anticipos
-      anticipo_tipo: anticipoTipo,
-      anticipos: anticiposNumeros.filter((n) => n > 0).slice(0, 5),
+      anticipo: anticipoTotal + saldoAnteriorTotal, // compatibilidad con lo viejo
+      anticipo_montos: anticipoNumeros.filter((n) => n > 0).slice(0, 5),
+      saldo_anterior_montos: saldoAnteriorNumeros.filter((n) => n > 0).slice(0, 5),
+      anticipo_total: anticipoTotal,
+      saldo_anterior_total: saldoAnteriorTotal,
     };
 
     const payloadConUUID = {
@@ -328,8 +335,8 @@ export default function VentaForm({
       await refetchVentas();
 
       setMensaje(`✅ Compra guardada correctamente con nota #${numeroNota}`);
-      setAnticipos(['', '', '', '', '']);
-      setAnticipoTipo('anticipo');
+      setAnticipoMontos(['', '', '', '', '']);
+      setSaldoAnteriorMontos(['', '', '', '', '']);
       setProductosPorTipo({});
       setClasificacionSeleccionada('');
     }
@@ -430,59 +437,90 @@ export default function VentaForm({
         </div>
 
         <div style={{ marginTop: '1rem' }}>
-          <label>
-            <strong>Tipo:</strong>
-          </label>
-          <select
-            value={anticipoTipo}
-            onChange={(e) => setAnticipoTipo(e.target.value)}
-            style={{ ...inputEstilo, marginTop: 6 }}
-          >
-            <option value="anticipo">Anticipo</option>
-            <option value="saldo_anterior">Saldo anterior</option>
-          </select>
+  {/* SALDO ANTERIOR */}
+  <div style={{ marginBottom: '1.5rem' }}>
+    <label>
+      <strong>Saldo anterior:</strong>
+    </label>
 
-          <div style={{ marginTop: 10 }}>
-            <label>
-              <strong>Montos (hasta 5):</strong>
-            </label>
-
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-                gap: 10,
-                marginTop: 8,
-              }}
-            >
-              {anticipos.map((val, idx) => (
-                <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <span style={{ fontSize: '0.85rem', color: '#555' }}>{idx + 1}.-</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={val}
-                    onChange={(e) => {
-                      const v = limpiarMonto(e.target.value);
-                      setAnticipos((prev) => {
-                        const next = [...prev];
-                        next[idx] = v;
-                        return next;
-                      });
-                    }}
-                    style={inputEstilo}
-                    placeholder="0.00"
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div style={{ marginTop: 10, textAlign: 'right', fontWeight: 'bold' }}>
-              Total {anticipoTipo === 'saldo_anterior' ? 'Saldo anterior' : 'Anticipo'}: ${anticipoTotal.toFixed(2)}
-            </div>
-          </div>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+        gap: 10,
+        marginTop: 8,
+      }}
+    >
+      {saldoAnteriorMontos.map((val, idx) => (
+        <div key={`saldo-${idx}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: '0.85rem', color: '#555' }}>{idx + 1}.-</span>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={val}
+            onChange={(e) => {
+              const v = limpiarMonto(e.target.value);
+              setSaldoAnteriorMontos((prev) => {
+                const next = [...prev];
+                next[idx] = v;
+                return next;
+              });
+            }}
+            style={inputEstilo}
+            placeholder="0.00"
+          />
         </div>
+      ))}
+    </div>
+
+    <div style={{ marginTop: 10, textAlign: 'right', fontWeight: 'bold' }}>
+      Total Saldo anterior: ${saldoAnteriorTotal.toFixed(2)}
+    </div>
+  </div>
+
+  {/* ANTICIPO */}
+  <div>
+    <label>
+      <strong>Anticipo:</strong>
+    </label>
+
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+        gap: 10,
+        marginTop: 8,
+      }}
+    >
+      {anticipoMontos.map((val, idx) => (
+        <div key={`anticipo-${idx}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: '0.85rem', color: '#555' }}>{idx + 1}.-</span>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={val}
+            onChange={(e) => {
+              const v = limpiarMonto(e.target.value);
+              setAnticipoMontos((prev) => {
+                const next = [...prev];
+                next[idx] = v;
+                return next;
+              });
+            }}
+            style={inputEstilo}
+            placeholder="0.00"
+          />
+        </div>
+      ))}
+    </div>
+
+    <div style={{ marginTop: 10, textAlign: 'right', fontWeight: 'bold' }}>
+      Total Anticipo: ${anticipoTotal.toFixed(2)}
+    </div>
+  </div>
+</div>
 
         {Object.keys(productosPorTipo).map((tipo) => (
           <div key={tipo} style={{ marginTop: '2rem' }}>
