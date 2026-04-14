@@ -497,11 +497,14 @@ const sumAnticipos = (venta) =>
 
 
     // === RESUMEN DE SALDOS (FORMATO COMPACTO, SIN CEROS) ===
-    const saldoAnteriorTotal = getSaldoAnteriorTotal(venta);
-    const anticipoTotal = getAnticipoTotal(venta);
+  const saldoAnteriorArray = getSaldoAnteriorArray(venta);
+  const anticipoArray = getAnticipoArray(venta);
 
-    const totalAjustes = saldoAnteriorTotal + anticipoTotal;
-    const saldoFinal = totalGeneralImporte - totalAjustes;
+  const saldoAnteriorTotal = saldoAnteriorArray.reduce((a, b) => a + b, 0);
+  const anticipoTotal = anticipoArray.reduce((a, b) => a + b, 0);
+
+  const totalAjustes = saldoAnteriorTotal + anticipoTotal;
+  const saldoFinal = totalGeneralImporte - totalAjustes;
 
     const resumenW = 82;
     const resumenX = pageW - margin - resumenW;
@@ -512,15 +515,25 @@ const sumAnticipos = (venta) =>
       { label: 'TOTAL NOTA', value: totalGeneralImporte, bold: true },
     ];
 
-    if (saldoAnteriorTotal > 0) {
-      filas.push({ label: 'SALDO ANTERIOR', value: saldoAnteriorTotal });
+    if (saldoAnteriorArray.length) {
+      saldoAnteriorArray.forEach((monto, idx) => {
+        filas.push({
+          label: saldoAnteriorArray.length === 1 ? 'SALDO ANTERIOR' : `SALDO ANTERIOR ${idx + 1}`,
+          value: monto,
+        });
+      });
     }
 
-    if (anticipoTotal > 0) {
-      filas.push({ label: 'ANTICIPO', value: anticipoTotal });
+    if (anticipoArray.length) {
+      anticipoArray.forEach((monto, idx) => {
+        filas.push({
+          label: anticipoArray.length === 1 ? 'ANTICIPO' : `ANTICIPO ${idx + 1}`,
+          value: monto,
+        });
+      });
     }
 
-    if (saldoAnteriorTotal > 0 || anticipoTotal > 0) {
+    if (saldoAnteriorArray.length || anticipoArray.length) {
       filas.push({ sep: true });
     }
 
